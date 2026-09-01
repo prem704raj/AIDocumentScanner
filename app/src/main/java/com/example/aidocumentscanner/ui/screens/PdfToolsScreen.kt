@@ -1,1288 +1,1023 @@
 package com.example.aidocumentscanner.ui.screens
 
+import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CallMerge
+import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Reorder
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
+import com.example.aidocumentscanner.pdf.PageSpecParser
+import com.example.aidocumentscanner.pdf.PdfDocumentRegistrar
 import com.example.aidocumentscanner.pdf.PdfEditor
-import com.example.aidocumentscanner.pdf.PdfGenerator
-import com.example.aidocumentscanner.ui.theme.GradientEnd
-import com.example.aidocumentscanner.ui.theme.GradientMiddle
-import com.example.aidocumentscanner.ui.theme.GradientStart
+import com.example.aidocumentscanner.pdf.PdfToolFileManager
+import com.example.aidocumentscanner.util.BitmapLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-// Data class to represent external PDF files from file manager
-data class ExternalPdfFile(
-    val uri: Uri,
-    val name: String,
-    val size: Long,
-    val pageCount: Int = 0
-)
-
-enum class PdfTool(
-    val label: String,
-    val description: String,
-    val icon: ImageVector,
-    val gradient: List<Color>
+private enum class Phase4PdfTool(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector
 ) {
-    MERGE("Merge PDFs", "Combine multiple PDFs", Icons.Default.CallMerge, listOf(Color(0xFF6366F1), Color(0xFF8B5CF6))),
-    SPLIT("Split PDF", "Split into separate PDFs", Icons.Default.CallSplit, listOf(Color(0xFF10B981), Color(0xFF34D399))),
-    REMOVE_PAGES("Remove Pages", "Delete specific pages", Icons.Default.Delete, listOf(Color(0xFFEF4444), Color(0xFFF97316))),
-    EXTRACT_IMAGES("Extract Images", "Save pages as images", Icons.Default.Image, listOf(Color(0xFF3B82F6), Color(0xFF06B6D4))),
-    OPTIMIZE("Optimize PDF", "Reduce file size", Icons.Default.Compress, listOf(Color(0xFFF59E0B), Color(0xFFFBBF24))),
-    ADD_WATERMARK("Add Watermark", "Add text watermark", Icons.Default.WaterDrop, listOf(Color(0xFF8B5CF6), Color(0xFFA855F7))),
-    PASSWORD_PROTECT("Password Protect", "Secure your PDF", Icons.Default.Lock, listOf(Color(0xFFEC4899), Color(0xFFF472B6)))
+    MERGE("Merge PDFs", "Combine two or more PDFs", Icons.Default.CallMerge),
+    SPLIT("Split PDF", "Create PDFs from page groups", Icons.Default.CallSplit),
+    REMOVE("Remove pages", "Create a copy without selected pages", Icons.Default.Delete),
+    REORDER("Reorder pages", "Enter the complete new page order", Icons.Default.Reorder),
+    ROTATE("Rotate pages", "Rotate selected pages without rasterizing", Icons.Default.RotateRight),
+    EXTRACT_IMAGES("PDF to images", "Extract selected pages as JPEGs", Icons.Default.Image),
+    IMAGES_TO_PDF("Images to PDF", "Use scanner editor for selected images", Icons.Default.PictureAsPdf),
+    OPTIMIZE("Optimize PDF", "Safe structure-preserving cleanup", Icons.Default.Compress),
+    WATERMARK("Watermark", "Add a visible local watermark", Icons.Default.WaterDrop),
+    PASSWORD("Password protect", "Create an encrypted PDF copy", Icons.Default.Lock),
+    RENAME("Rename document", "Change the name shown in DocuScan", Icons.Default.Edit)
 }
+
+private data class ExternalPdfSelection(
+    val info: PdfToolFileManager.ExternalInfo
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfToolsScreen(
     onBack: () -> Unit,
-    onMergeComplete: (Long) -> Unit,
-    onOptimizeRequested: () -> Unit
+    onDocumentCreated: (Long) -> Unit,
+    onOptimizeRequested: (Long?) -> Unit,
+    onImagesToPdfRequested: (List<Bitmap>) -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val repository = remember { DocumentRepository(context) }
     val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
-    
-    var selectedTool by remember { mutableStateOf<PdfTool?>(null) }
-    var selectedDocuments by remember { mutableStateOf<List<Document>>(emptyList()) }
-    var isProcessing by remember { mutableStateOf(false) }
-    var processingMessage by remember { mutableStateOf("") }
-    
-    // External PDFs from file manager
-    var externalPdfs by remember { mutableStateOf<List<ExternalPdfFile>>(emptyList()) }
-    
-    // For page selection (remove/extract pages)
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+
+    var selectedTool by remember { mutableStateOf<Phase4PdfTool?>(null) }
     var selectedDocument by remember { mutableStateOf<Document?>(null) }
-    var selectedExternalPdf by remember { mutableStateOf<ExternalPdfFile?>(null) }
-    var pageCount by remember { mutableStateOf(0) }
-    var selectedPages by remember { mutableStateOf<Set<Int>>(emptySet()) }
-    var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    
-    // For watermark
+    var externalSelection by remember { mutableStateOf<ExternalPdfSelection?>(null) }
+    val mergeDocuments = remember { mutableStateListOf<Document>() }
+    val mergeExternal = remember { mutableStateListOf<ExternalPdfSelection>() }
+
+    var pageSpec by remember { mutableStateOf("") }
+    var splitSpec by remember { mutableStateOf("") }
+    var orderSpec by remember { mutableStateOf("") }
     var watermarkText by remember { mutableStateOf("") }
-    var showWatermarkDialog by remember { mutableStateOf(false) }
-    
-    // For password protection
-    var passwordText by remember { mutableStateOf("") }
-    var showPasswordDialog by remember { mutableStateOf(false) }
-    
-    // File picker for external PDFs
-    val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var renameText by remember { mutableStateOf("") }
+    var rotation by remember { mutableIntStateOf(90) }
+    var processing by remember { mutableStateOf(false) }
+
+    val currentSourcePageCount = selectedDocument?.pageCount ?: remember(externalSelection?.info?.uri) {
+        externalSelection?.let { selection ->
+            var temp: File? = null
+            try {
+                temp = PdfToolFileManager.copyToToolCache(context, selection.info)
+                PdfEditor.getPageCount(temp.absolutePath)
+            } catch (_: Throwable) {
+                0
+            } finally {
+                PdfToolFileManager.cleanup(temp)
+            }
+        } ?: 0
+    }
+
+    fun resetWorkspace() {
+        selectedDocument = null
+        externalSelection = null
+        mergeDocuments.clear()
+        mergeExternal.clear()
+        pageSpec = ""
+        splitSpec = ""
+        orderSpec = ""
+        watermarkText = ""
+        password = ""
+        confirmPassword = ""
+        renameText = ""
+        rotation = 90
+    }
+
+    val singlePdfPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        externalSelection = ExternalPdfSelection(
+            PdfToolFileManager.queryExternalInfo(context, uri)
+        )
+    }
+
+    val mergePdfPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         uris.forEach { uri ->
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            val info = PdfToolFileManager.queryExternalInfo(context, uri)
+            if (mergeExternal.none { it.info.uri == uri }) {
+                mergeExternal += ExternalPdfSelection(info)
+            }
+        }
+    }
+
+    val imagesPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+
+        processing = true
+        scope.launch {
+            val bitmaps = withContext(Dispatchers.IO) {
+                uris.mapNotNull { BitmapLoader.decode(context, it) }
+            }
+            processing = false
+
+            if (bitmaps.isEmpty()) {
+                snackbar.showSnackbar("Could not read the selected images")
+            } else {
+                onImagesToPdfRequested(bitmaps)
+            }
+        }
+    }
+
+    fun selectedSourceName(): String? =
+        selectedDocument?.name ?: externalSelection?.info?.displayName
+
+    suspend fun withPreparedSingleSource(
+        action: suspend (File) -> Unit
+    ) {
+        val internal = selectedDocument
+        if (internal != null) {
+            action(File(internal.pdfPath))
+            return
+        }
+
+        val external = externalSelection ?: error("Choose a PDF first")
+        var temp: File? = null
+        try {
+            temp = withContext(Dispatchers.IO) {
+                PdfToolFileManager.copyToToolCache(context, external.info)
+            }
+            action(temp)
+        } finally {
+            PdfToolFileManager.cleanup(temp)
+        }
+    }
+
+    suspend fun registerAndOpen(outputPath: String) {
+        val id = withContext(Dispatchers.IO) {
+            PdfDocumentRegistrar.register(
+                context,
+                repository,
+                outputPath,
+                File(outputPath).nameWithoutExtension
             )
-            
-            // Get file info
-            val cursor = context.contentResolver.query(uri, null, null, null, null)
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    val sizeIndex = it.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                    val name = if (nameIndex >= 0) it.getString(nameIndex) else "Unknown PDF"
-                    val size = if (sizeIndex >= 0) it.getLong(sizeIndex) else 0L
-                    
-                    // Get page count
-                    val count = try {
-                        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                            PdfRenderer(pfd).use { renderer ->
-                                renderer.pageCount
-                            }
-                        } ?: 0
-                    } catch (e: Exception) {
-                        0
-                    }
-                    
-                    externalPdfs = externalPdfs + ExternalPdfFile(uri, name, size, count)
+        }
+        onDocumentCreated(id)
+    }
+
+    suspend fun performSingleOutput(
+        operation: (File) -> Result<String>
+    ) {
+        processing = true
+        try {
+            withPreparedSingleSource { source ->
+                val output = withContext(Dispatchers.IO) {
+                    operation(source).getOrThrow()
                 }
+                registerAndOpen(output)
             }
+        } catch (error: Throwable) {
+            snackbar.showSnackbar(error.message ?: "PDF operation failed")
+        } finally {
+            processing = false
         }
     }
-    
-    // Load page count when document selected
-    LaunchedEffect(selectedDocument) {
-        selectedDocument?.let { doc ->
-            withContext(Dispatchers.IO) {
-                pageCount = PdfEditor.getPageCount(doc.pdfPath)
-                val bitmaps = PdfEditor.renderAllPagesToBitmap(context, doc.pdfPath)
-                pageBitmaps = bitmaps
-            }
-            selectedPages = emptySet()
-        }
-    }
-    
-    // Load page count when external pdf selected
-    LaunchedEffect(selectedExternalPdf) {
-        selectedExternalPdf?.let { pdf ->
-            withContext(Dispatchers.IO) {
-                pageCount = pdf.pageCount
-                // Render pages from URI
-                val bitmaps = mutableListOf<Bitmap>()
-                try {
-                    context.contentResolver.openFileDescriptor(pdf.uri, "r")?.use { pfd ->
-                        PdfRenderer(pfd).use { renderer ->
-                            for (i in 0 until renderer.pageCount) {
-                                renderer.openPage(i).use { page ->
-                                    val bitmap = Bitmap.createBitmap(
-                                        page.width,
-                                        page.height,
-                                        Bitmap.Config.ARGB_8888
-                                    )
-                                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                    bitmaps.add(bitmap)
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                pageBitmaps = bitmaps
-            }
-            selectedPages = emptySet()
-        }
-    }
-    
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Column {
                         Text(
-                            if (selectedTool != null) selectedTool!!.label else "PDF Tools",
+                            selectedTool?.title ?: "PDF Tools",
                             fontWeight = FontWeight.Bold
                         )
-                        if (selectedTool != null) {
+                        selectedTool?.let {
                             Text(
-                                selectedTool!!.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                it.subtitle,
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        when {
-                            selectedDocument != null || selectedExternalPdf != null -> {
-                                selectedDocument = null
-                                selectedExternalPdf = null
-                                pageBitmaps = emptyList()
-                            }
-                            selectedTool != null -> {
+                    IconButton(
+                        onClick = {
+                            if (selectedTool == null) {
+                                onBack()
+                            } else {
                                 selectedTool = null
-                                selectedDocuments = emptyList()
-                                externalPdfs = emptyList()
+                                resetWorkspace()
                             }
-                            else -> onBack()
                         }
-                    }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            // Show FAB to add PDFs from file manager when in document selection mode
-            if (selectedTool != null && selectedDocument == null && selectedExternalPdf == null) {
-                FloatingActionButton(
-                    onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add PDF from device")
-                }
-            }
         }
-    ) { paddingValues ->
+    ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(padding)
         ) {
-            when {
-                // Tool selection screen
-                selectedTool == null -> {
-                    ToolSelectionGrid(
-                        onToolSelected = { tool ->
-                            if (tool == PdfTool.OPTIMIZE) {
-                                onOptimizeRequested()
-                            } else {
-                                selectedTool = tool
-                                selectedDocuments = emptyList()
-                                selectedDocument = null
-                                selectedExternalPdf = null
-                                externalPdfs = emptyList()
+            if (selectedTool == null) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(Phase4PdfTool.entries) { tool ->
+                        PdfToolCard(
+                            tool = tool,
+                            onClick = {
+                                resetWorkspace()
+                                if (tool == Phase4PdfTool.IMAGES_TO_PDF) {
+                                    imagesPicker.launch(
+                                        PickVisualMediaRequest(
+                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                        )
+                                    )
+                                } else {
+                                    selectedTool = tool
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                val tool = selectedTool!!
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (tool == Phase4PdfTool.MERGE) {
+                        item {
+                            Text(
+                                "Choose at least two PDFs. Their displayed order below is the merge order.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+
+                        items(documents, key = { "merge_internal_${it.id}" }) { doc ->
+                            SelectableDocumentRow(
+                                name = doc.name,
+                                selected = mergeDocuments.any { it.id == doc.id },
+                                onToggle = {
+                                    val existing = mergeDocuments.indexOfFirst { it.id == doc.id }
+                                    if (existing >= 0) mergeDocuments.removeAt(existing)
+                                    else mergeDocuments += doc
+                                }
+                            )
+                        }
+
+                        items(mergeExternal, key = { it.info.uri.toString() }) { external ->
+                            SelectableDocumentRow(
+                                name = external.info.displayName,
+                                selected = true,
+                                onToggle = { mergeExternal.remove(external) }
+                            )
+                        }
+
+                        item {
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    mergePdfPicker.launch(arrayOf("application/pdf"))
+                                }
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null)
+                                Spacer(Modifier.size(8.dp))
+                                Text("Add PDFs from device")
                             }
                         }
-                    )
-                }
-                
-                // Page selection for remove/split/extract pages
-                (selectedDocument != null || selectedExternalPdf != null) && 
-                (selectedTool == PdfTool.REMOVE_PAGES || selectedTool == PdfTool.EXTRACT_IMAGES || selectedTool == PdfTool.SPLIT) -> {
-                    PageSelectionScreen(
-                        documentName = selectedDocument?.name ?: selectedExternalPdf?.name ?: "",
-                        pageCount = pageCount,
-                        pageBitmaps = pageBitmaps,
-                        selectedPages = selectedPages,
-                        onPageToggle = { page ->
-                            selectedPages = if (page in selectedPages) {
-                                selectedPages - page
-                            } else {
-                                selectedPages + page
-                            }
-                        },
-                        onSelectAll = {
-                            selectedPages = (1..pageCount).toSet()
-                        },
-                        onDeselectAll = {
-                            selectedPages = emptySet()
-                        },
-                        actionLabel = when (selectedTool) {
-                            PdfTool.REMOVE_PAGES -> "Remove Selected"
-                            PdfTool.EXTRACT_IMAGES -> "Extract as Images"
-                            PdfTool.SPLIT -> "Split PDF"
-                            else -> "Action"
-                        },
-                        onAction = {
-                            if (selectedPages.isNotEmpty()) {
-                                isProcessing = true
-                                processingMessage = when (selectedTool) {
-                                    PdfTool.REMOVE_PAGES -> "Removing pages..."
-                                    PdfTool.EXTRACT_IMAGES -> "Extracting images..."
-                                    PdfTool.SPLIT -> "Splitting PDF..."
-                                    else -> "Processing..."
-                                }
-                                
-                                scope.launch {
-                                    val pdfPath = selectedDocument?.pdfPath ?: run {
-                                        // Copy external PDF to temp file
-                                        selectedExternalPdf?.let { external ->
-                                            val tempFile = File(context.cacheDir, "temp_${System.currentTimeMillis()}.pdf")
-                                            context.contentResolver.openInputStream(external.uri)?.use { input ->
-                                                tempFile.outputStream().use { output ->
-                                                    input.copyTo(output)
-                                                }
-                                            }
-                                            tempFile.absolutePath
-                                        }
-                                    }
-                                    
-                                    if (pdfPath != null) {
-                                        when (selectedTool) {
-                                            PdfTool.REMOVE_PAGES -> {
-                                                val result = withContext(Dispatchers.IO) {
-                                                    PdfEditor.removePages(context, pdfPath, selectedPages.toList())
-                                                }
-                                                
-                                                result.onSuccess { newPath ->
-                                                    val newPageCount = PdfEditor.getPageCount(newPath)
-                                                    val newDoc = Document(
-                                                        name = File(newPath).nameWithoutExtension,
-                                                        pdfPath = newPath,
-                                                        thumbnailPath = selectedDocument?.thumbnailPath,
-                                                        pageCount = newPageCount,
-                                                        size = PdfGenerator.getFileSize(newPath)
+
+                        item {
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = mergeDocuments.size + mergeExternal.size >= 2 && !processing,
+                                onClick = {
+                                    scope.launch {
+                                        processing = true
+                                        val tempFiles = mutableListOf<File>()
+                                        try {
+                                            val paths = mutableListOf<String>()
+                                            paths += mergeDocuments.map { it.pdfPath }
+
+                                            mergeExternal.forEach { external ->
+                                                val temp = withContext(Dispatchers.IO) {
+                                                    PdfToolFileManager.copyToToolCache(
+                                                        context,
+                                                        external.info
                                                     )
-                                                    repository.insertDocument(newDoc)
-                                                    
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "Pages removed successfully!", Toast.LENGTH_SHORT).show()
-                                                    }
                                                 }
-                                                
-                                                result.onFailure { error ->
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                                                    }
-                                                }
+                                                tempFiles += temp
+                                                paths += temp.absolutePath
                                             }
-                                            
-                                            PdfTool.EXTRACT_IMAGES -> {
-                                                val result = withContext(Dispatchers.IO) {
-                                                    PdfEditor.extractPagesAsImages(context, pdfPath, selectedPages.toList().sorted())
-                                                }
-                                                
-                                                result.onSuccess { count ->
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "$count images saved to gallery!", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                                
-                                                result.onFailure { error ->
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                                                    }
-                                                }
-                                            }
-                                            
-                                            PdfTool.SPLIT -> {
-                                                val result = withContext(Dispatchers.IO) {
-                                                    PdfEditor.splitPdfByPages(context, pdfPath, selectedPages.toList().sorted())
-                                                }
-                                                
-                                                result.onSuccess { newPath ->
-                                                    val newPageCount = PdfEditor.getPageCount(newPath)
-                                                    val newDoc = Document(
-                                                        name = File(newPath).nameWithoutExtension,
-                                                        pdfPath = newPath,
-                                                        thumbnailPath = selectedDocument?.thumbnailPath,
-                                                        pageCount = newPageCount,
-                                                        size = PdfGenerator.getFileSize(newPath)
-                                                    )
-                                                    repository.insertDocument(newDoc)
-                                                    
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "PDF split successfully!", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                                
-                                                result.onFailure { error ->
-                                                    withContext(Dispatchers.Main) {
-                                                        Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                                                    }
-                                                }
-                                            }
-                                            else -> {}
-                                        }
-                                    }
-                                    
-                                    isProcessing = false
-                                    selectedDocument = null
-                                    selectedExternalPdf = null
-                                    selectedTool = null
-                                    pageBitmaps = emptyList()
-                                }
-                            }
-                        }
-                    )
-                }
-                
-                // Document selection for merge or single document operations
-                else -> {
-                    EnhancedDocumentSelectionScreen(
-                        documents = documents,
-                        selectedDocuments = selectedDocuments,
-                        externalPdfs = externalPdfs,
-                        multiSelect = selectedTool == PdfTool.MERGE,
-                        onDocumentToggle = { doc ->
-                            when (selectedTool) {
-                                PdfTool.MERGE -> {
-                                    selectedDocuments = if (doc in selectedDocuments) {
-                                        selectedDocuments - doc
-                                    } else {
-                                        selectedDocuments + doc
-                                    }
-                                }
-                                PdfTool.SPLIT, PdfTool.REMOVE_PAGES, PdfTool.EXTRACT_IMAGES -> {
-                                    selectedDocument = doc
-                                }
-                                PdfTool.OPTIMIZE, PdfTool.ADD_WATERMARK, PdfTool.PASSWORD_PROTECT -> {
-                                    selectedDocument = doc
-                                    when (selectedTool) {
-                                        PdfTool.ADD_WATERMARK -> showWatermarkDialog = true
-                                        PdfTool.PASSWORD_PROTECT -> showPasswordDialog = true
-                                        PdfTool.OPTIMIZE -> onOptimizeRequested()
-                                        else -> {}
-                                    }
-                                }
-                                else -> {}
-                            }
-                        },
-                        onExternalPdfToggle = { pdf ->
-                            when (selectedTool) {
-                                PdfTool.MERGE -> {
-                                    // For merge, add to external list (already there) and toggle selection state
-                                }
-                                PdfTool.SPLIT, PdfTool.REMOVE_PAGES, PdfTool.EXTRACT_IMAGES -> {
-                                    selectedExternalPdf = pdf
-                                }
-                                else -> {}
-                            }
-                        },
-                        onExternalPdfDelete = { pdf ->
-                            externalPdfs = externalPdfs.filter { it.uri != pdf.uri }
-                        },
-                        onAddFromDevice = {
-                            pdfPickerLauncher.launch(arrayOf("application/pdf"))
-                        },
-                        onAction = {
-                            when (selectedTool) {
-                                PdfTool.MERGE -> {
-                                    val totalPdfs = selectedDocuments.size + externalPdfs.size
-                                    if (totalPdfs >= 2) {
-                                        isProcessing = true
-                                        processingMessage = "Merging PDFs..."
-                                        
-                                        scope.launch {
-                                            // Prepare paths - including external PDFs
-                                            val allPaths = mutableListOf<String>()
-                                            
-                                            // Add selected documents
-                                            allPaths.addAll(selectedDocuments.map { it.pdfPath })
-                                            
-                                            // Copy external PDFs to temp files
-                                            externalPdfs.forEach { external ->
-                                                try {
-                                                    val tempFile = File(context.cacheDir, "ext_${System.currentTimeMillis()}_${external.name}")
-                                                    context.contentResolver.openInputStream(external.uri)?.use { input ->
-                                                        tempFile.outputStream().use { output ->
-                                                            input.copyTo(output)
-                                                        }
-                                                    }
-                                                    allPaths.add(tempFile.absolutePath)
-                                                } catch (e: Exception) {
-                                                    e.printStackTrace()
-                                                }
-                                            }
-                                            
-                                            val result = withContext(Dispatchers.IO) {
+
+                                            val output = withContext(Dispatchers.IO) {
                                                 PdfEditor.mergePdfs(
                                                     context,
-                                                    allPaths,
+                                                    paths,
                                                     "Merged_Document"
-                                                )
+                                                ).getOrThrow()
                                             }
-                                            
-                                            result.onSuccess { mergedPath ->
-                                                val totalPages = selectedDocuments.sumOf { it.pageCount } + externalPdfs.sumOf { it.pageCount }
-                                                val mergedDoc = Document(
-                                                    name = "Merged Document",
-                                                    pdfPath = mergedPath,
-                                                    thumbnailPath = selectedDocuments.firstOrNull()?.thumbnailPath,
-                                                    pageCount = totalPages,
-                                                    size = PdfGenerator.getFileSize(mergedPath)
-                                                )
-                                                val docId = repository.insertDocument(mergedDoc)
-                                                
-                                                withContext(Dispatchers.Main) {
-                                                    Toast.makeText(context, "PDFs merged successfully!", Toast.LENGTH_SHORT).show()
-                                                    onMergeComplete(docId)
-                                                }
-                                            }
-                                            
-                                            result.onFailure { error ->
-                                                withContext(Dispatchers.Main) {
-                                                    Toast.makeText(context, "Merge failed: ${error.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            }
-                                            
-                                            isProcessing = false
+                                            registerAndOpen(output)
+                                        } catch (error: Throwable) {
+                                            snackbar.showSnackbar(
+                                                error.message ?: "Merge failed"
+                                            )
+                                        } finally {
+                                            tempFiles.forEach(PdfToolFileManager::cleanup)
+                                            processing = false
                                         }
                                     }
                                 }
-                                else -> {}
+                            ) {
+                                Text("Merge ${mergeDocuments.size + mergeExternal.size} PDFs")
                             }
-                        },
-                        actionLabel = when (selectedTool) {
-                            PdfTool.MERGE -> "Merge ${selectedDocuments.size + externalPdfs.size} PDFs"
-                            else -> "Select PDF"
-                        },
-                        actionEnabled = when (selectedTool) {
-                            PdfTool.MERGE -> (selectedDocuments.size + externalPdfs.size) >= 2
-                            else -> false
-                        },
-                        showActionButton = selectedTool == PdfTool.MERGE
-                    )
-                }
-            }
-            
-            // Loading overlay
-            if (isProcessing) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(strokeWidth = 4.dp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(processingMessage, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
-            
-            // Watermark Dialog
-            if (showWatermarkDialog && selectedDocument != null) {
-                AlertDialog(
-                    onDismissRequest = { 
-                        showWatermarkDialog = false 
-                        selectedDocument = null
-                    },
-                    title = { Text("Add Watermark") },
-                    text = {
-                        Column {
-                            Text("Enter watermark text:", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = watermarkText,
-                                onValueChange = { watermarkText = it },
-                                placeholder = { Text("e.g., CONFIDENTIAL") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
                         }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (watermarkText.isNotBlank()) {
-                                    isProcessing = true
-                                    processingMessage = "Adding watermark..."
-                                    showWatermarkDialog = false
-                                    
-                                    scope.launch {
-                                        val result = withContext(Dispatchers.IO) {
-                                            PdfEditor.addWatermark(context, selectedDocument!!.pdfPath, watermarkText)
-                                        }
-                                        
-                                        result.onSuccess { newPath ->
-                                            val newDoc = Document(
-                                                name = "${selectedDocument!!.name}_watermarked",
-                                                pdfPath = newPath,
-                                                thumbnailPath = selectedDocument!!.thumbnailPath,
-                                                pageCount = selectedDocument!!.pageCount,
-                                                size = PdfGenerator.getFileSize(newPath)
-                                            )
-                                            repository.insertDocument(newDoc)
-                                            Toast.makeText(context, "Watermark added!", Toast.LENGTH_SHORT).show()
-                                        }
-                                        
-                                        result.onFailure { error ->
-                                            Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                                        }
-                                        
-                                        isProcessing = false
-                                        selectedDocument = null
-                                        selectedTool = null
-                                        watermarkText = ""
+                    } else {
+                        if (selectedDocument == null && externalSelection == null) {
+                            item {
+                                Text(
+                                    when (tool) {
+                                        Phase4PdfTool.OPTIMIZE ->
+                                            "Choose a DocuScan document to optimize."
+                                        Phase4PdfTool.RENAME ->
+                                            "Choose a DocuScan document to rename."
+                                        else ->
+                                            "Choose a DocuScan document or a PDF from your device."
+                                    }
+                                )
+                            }
+
+                            items(documents, key = { "single_${it.id}" }) { doc ->
+                                Surface(
+                                    onClick = {
+                                        selectedDocument = doc
+                                        renameText = doc.name
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    tonalElevation = 1.dp
+                                ) {
+                                    Column(Modifier.padding(14.dp)) {
+                                        Text(
+                                            doc.name,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            "${doc.pageCount} pages",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                 }
-                            },
-                            enabled = watermarkText.isNotBlank()
-                        ) {
-                            Text("Add Watermark")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { 
-                            showWatermarkDialog = false
-                            selectedDocument = null
-                            watermarkText = ""
-                        }) {
-                            Text("Cancel")
-                        }
-                    }
-                )
-            }
-            
-            // Password Dialog
-            if (showPasswordDialog && selectedDocument != null) {
-                AlertDialog(
-                    onDismissRequest = { 
-                        showPasswordDialog = false 
-                        selectedDocument = null
-                    },
-                    title = { Text("Password Protect PDF") },
-                    text = {
-                        Column {
-                            Text("Enter password:", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = passwordText,
-                                onValueChange = { passwordText = it },
-                                placeholder = { Text("Enter password") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (passwordText.isNotBlank()) {
-                                    isProcessing = true
-                                    processingMessage = "Encrypting PDF..."
-                                    showPasswordDialog = false
-                                    
-                                    scope.launch {
-                                        val result = withContext(Dispatchers.IO) {
-                                            PdfEditor.passwordProtect(context, selectedDocument!!.pdfPath, passwordText)
+                            }
+
+                            if (tool != Phase4PdfTool.OPTIMIZE &&
+                                tool != Phase4PdfTool.RENAME
+                            ) {
+                                item {
+                                    OutlinedButton(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onClick = {
+                                            singlePdfPicker.launch(arrayOf("application/pdf"))
                                         }
-                                        
-                                        result.onSuccess { newPath ->
-                                            val newDoc = Document(
-                                                name = "${selectedDocument!!.name}_protected",
-                                                pdfPath = newPath,
-                                                thumbnailPath = selectedDocument!!.thumbnailPath,
-                                                pageCount = selectedDocument!!.pageCount,
-                                                size = PdfGenerator.getFileSize(newPath)
-                                            )
-                                            repository.insertDocument(newDoc)
-                                            Toast.makeText(context, "PDF password protected!", Toast.LENGTH_SHORT).show()
-                                        }
-                                        
-                                        result.onFailure { error ->
-                                            Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                                        }
-                                        
-                                        isProcessing = false
-                                        selectedDocument = null
-                                        selectedTool = null
-                                        passwordText = ""
+                                    ) {
+                                        Icon(Icons.Default.UploadFile, contentDescription = null)
+                                        Spacer(Modifier.size(8.dp))
+                                        Text("Choose PDF from device")
                                     }
                                 }
-                            },
-                            enabled = passwordText.isNotBlank()
-                        ) {
-                            Text("Protect PDF")
+                            }
+                        } else {
+                            item {
+                                SelectedSourceHeader(
+                                    name = selectedSourceName().orEmpty(),
+                                    onChange = {
+                                        selectedDocument = null
+                                        externalSelection = null
+                                    }
+                                )
+                            }
+
+                            val pageCount = currentSourcePageCount
+
+                            when (tool) {
+                                Phase4PdfTool.SPLIT -> {
+                                    item {
+                                        OutlinedTextField(
+                                            value = splitSpec,
+                                            onValueChange = { splitSpec = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Split groups") },
+                                            supportingText = {
+                                                Text("Example: 1-3;4-6;7-$pageCount")
+                                            }
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !processing,
+                                            onClick = {
+                                                scope.launch {
+                                                    val groups = PageSpecParser.parseSplitGroups(
+                                                        splitSpec,
+                                                        pageCount
+                                                    ).getOrElse {
+                                                        snackbar.showSnackbar(
+                                                            it.message ?: "Invalid ranges"
+                                                        )
+                                                        return@launch
+                                                    }
+
+                                                    processing = true
+                                                    try {
+                                                        withPreparedSingleSource { source ->
+                                                            val outputs = withContext(Dispatchers.IO) {
+                                                                PdfEditor.splitPdfGroups(
+                                                                    context,
+                                                                    source.absolutePath,
+                                                                    groups
+                                                                ).getOrThrow()
+                                                            }
+                                                            val ids = outputs.map { output ->
+                                                                withContext(Dispatchers.IO) {
+                                                                    PdfDocumentRegistrar.register(
+                                                                        context,
+                                                                        repository,
+                                                                        output
+                                                                    )
+                                                                }
+                                                            }
+                                                            snackbar.showSnackbar(
+                                                                "Created ${ids.size} split PDFs"
+                                                            )
+                                                            ids.firstOrNull()?.let(onDocumentCreated)
+                                                        }
+                                                    } catch (error: Throwable) {
+                                                        snackbar.showSnackbar(
+                                                            error.message ?: "Split failed"
+                                                        )
+                                                    } finally {
+                                                        processing = false
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Split PDF") }
+                                    }
+                                }
+
+                                Phase4PdfTool.REMOVE -> {
+                                    item {
+                                        PageSelectionField(
+                                            value = pageSpec,
+                                            onValueChange = { pageSpec = it },
+                                            pageCount = pageCount,
+                                            label = "Pages to remove"
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                scope.launch {
+                                                    val pages = PageSpecParser.parseSelection(
+                                                        pageSpec,
+                                                        pageCount
+                                                    ).getOrElse {
+                                                        snackbar.showSnackbar(
+                                                            it.message ?: "Invalid pages"
+                                                        )
+                                                        return@launch
+                                                    }
+                                                    performSingleOutput { source ->
+                                                        PdfEditor.removePages(
+                                                            context,
+                                                            source.absolutePath,
+                                                            pages
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Create PDF without these pages") }
+                                    }
+                                }
+
+                                Phase4PdfTool.REORDER -> {
+                                    item {
+                                        OutlinedTextField(
+                                            value = orderSpec,
+                                            onValueChange = { orderSpec = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Complete page order") },
+                                            supportingText = {
+                                                Text(
+                                                    "Enter all $pageCount pages once, e.g. " +
+                                                        PageSpecParser.allPagesSpec(pageCount)
+                                                )
+                                            }
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                scope.launch {
+                                                    val order = PageSpecParser.parseOrder(
+                                                        orderSpec,
+                                                        pageCount
+                                                    ).getOrElse {
+                                                        snackbar.showSnackbar(
+                                                            it.message ?: "Invalid page order"
+                                                        )
+                                                        return@launch
+                                                    }
+                                                    performSingleOutput { source ->
+                                                        PdfEditor.reorderPages(
+                                                            context,
+                                                            source.absolutePath,
+                                                            order
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Create reordered PDF") }
+                                    }
+                                }
+
+                                Phase4PdfTool.ROTATE -> {
+                                    item {
+                                        PageSelectionField(
+                                            value = pageSpec,
+                                            onValueChange = { pageSpec = it },
+                                            pageCount = pageCount,
+                                            label = "Pages to rotate"
+                                        )
+                                    }
+                                    item {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            listOf(90, 180, 270).forEach { angle ->
+                                                FilterChip(
+                                                    selected = rotation == angle,
+                                                    onClick = { rotation = angle },
+                                                    label = { Text("$angle°") }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                scope.launch {
+                                                    val pages = PageSpecParser.parseSelection(
+                                                        pageSpec,
+                                                        pageCount
+                                                    ).getOrElse {
+                                                        snackbar.showSnackbar(
+                                                            it.message ?: "Invalid pages"
+                                                        )
+                                                        return@launch
+                                                    }
+                                                    performSingleOutput { source ->
+                                                        PdfEditor.rotatePages(
+                                                            context,
+                                                            source.absolutePath,
+                                                            pages,
+                                                            rotation
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Rotate selected pages") }
+                                    }
+                                }
+
+                                Phase4PdfTool.EXTRACT_IMAGES -> {
+                                    item {
+                                        PageSelectionField(
+                                            value = pageSpec,
+                                            onValueChange = { pageSpec = it },
+                                            pageCount = pageCount,
+                                            label = "Pages to extract"
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                scope.launch {
+                                                    val pages = PageSpecParser.parseSelection(
+                                                        pageSpec,
+                                                        pageCount
+                                                    ).getOrElse {
+                                                        snackbar.showSnackbar(
+                                                            it.message ?: "Invalid pages"
+                                                        )
+                                                        return@launch
+                                                    }
+
+                                                    processing = true
+                                                    try {
+                                                        withPreparedSingleSource { source ->
+                                                            val files = withContext(Dispatchers.IO) {
+                                                                PdfEditor.extractPagesAsImageFiles(
+                                                                    context,
+                                                                    source.absolutePath,
+                                                                    pages
+                                                                ).getOrThrow()
+                                                            }
+                                                            shareExtractedImages(context, files)
+                                                            snackbar.showSnackbar(
+                                                                "Extracted ${files.size} images"
+                                                            )
+                                                        }
+                                                    } catch (error: Throwable) {
+                                                        snackbar.showSnackbar(
+                                                            error.message ?: "Extraction failed"
+                                                        )
+                                                    } finally {
+                                                        processing = false
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Extract and share images") }
+                                    }
+                                }
+
+                                Phase4PdfTool.WATERMARK -> {
+                                    item {
+                                        OutlinedTextField(
+                                            value = watermarkText,
+                                            onValueChange = { watermarkText = it.take(80) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Watermark text") },
+                                            singleLine = true
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = watermarkText.isNotBlank(),
+                                            onClick = {
+                                                scope.launch {
+                                                    performSingleOutput { source ->
+                                                        PdfEditor.addWatermark(
+                                                            context,
+                                                            source.absolutePath,
+                                                            watermarkText
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Create watermarked PDF") }
+                                    }
+                                }
+
+                                Phase4PdfTool.PASSWORD -> {
+                                    item {
+                                        OutlinedTextField(
+                                            value = password,
+                                            onValueChange = { password = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Password") },
+                                            visualTransformation = PasswordVisualTransformation(),
+                                            singleLine = true
+                                        )
+                                    }
+                                    item {
+                                        OutlinedTextField(
+                                            value = confirmPassword,
+                                            onValueChange = { confirmPassword = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Confirm password") },
+                                            visualTransformation = PasswordVisualTransformation(),
+                                            singleLine = true
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = password.length >= 6 &&
+                                                password == confirmPassword,
+                                            onClick = {
+                                                scope.launch {
+                                                    if (password != confirmPassword) {
+                                                        snackbar.showSnackbar(
+                                                            "Passwords do not match"
+                                                        )
+                                                        return@launch
+                                                    }
+                                                    performSingleOutput { source ->
+                                                        PdfEditor.passwordProtect(
+                                                            context,
+                                                            source.absolutePath,
+                                                            password
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) { Text("Create protected PDF") }
+                                    }
+                                }
+
+                                Phase4PdfTool.OPTIMIZE -> {
+                                    item {
+                                        Text(
+                                            "Optimization removes unused PDF objects and enables " +
+                                                "full compression. It does not intentionally turn " +
+                                                "pages into JPEG images."
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            onClick = {
+                                                onOptimizeRequested(selectedDocument?.id)
+                                            }
+                                        ) {
+                                            Text("Open safe optimizer")
+                                        }
+                                    }
+                                }
+
+                                Phase4PdfTool.RENAME -> {
+                                    item {
+                                        OutlinedTextField(
+                                            value = renameText,
+                                            onValueChange = { renameText = it.take(100) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Document name") },
+                                            singleLine = true
+                                        )
+                                    }
+                                    item {
+                                        Button(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = selectedDocument != null &&
+                                                renameText.isNotBlank(),
+                                            onClick = {
+                                                val doc = selectedDocument
+                                                    ?: return@Button
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        repository.renameDocument(
+                                                            doc.id,
+                                                            renameText.trim()
+                                                        )
+                                                    }
+                                                    snackbar.showSnackbar("Document renamed")
+                                                    selectedTool = null
+                                                    resetWorkspace()
+                                                }
+                                            }
+                                        ) { Text("Rename") }
+                                    }
+                                }
+
+                                else -> Unit
+                            }
                         }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { 
-                            showPasswordDialog = false
-                            selectedDocument = null
-                            passwordText = ""
-                        }) {
-                            Text("Cancel")
-                        }
                     }
-                )
+                }
             }
-        }
-    }
-}
 
-@Composable
-private fun ToolSelectionGrid(onToolSelected: (PdfTool) -> Unit) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Text(
-                "Select a Tool",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            
-            Text(
-                "Edit your PDF documents",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-        
-        items(PdfTool.entries) { tool ->
-            ToolCard(
-                tool = tool,
-                onClick = { onToolSelected(tool) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToolCard(
-    tool: PdfTool,
-    onClick: () -> Unit
-) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(90.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Gradient icon background
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Brush.linearGradient(tool.gradient)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    tool.icon,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    tool.label,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    tool.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun EnhancedDocumentSelectionScreen(
-    documents: List<Document>,
-    selectedDocuments: List<Document>,
-    externalPdfs: List<ExternalPdfFile>,
-    multiSelect: Boolean,
-    onDocumentToggle: (Document) -> Unit,
-    onExternalPdfToggle: (ExternalPdfFile) -> Unit,
-    onExternalPdfDelete: (ExternalPdfFile) -> Unit,
-    onAddFromDevice: () -> Unit,
-    onAction: () -> Unit,
-    actionLabel: String,
-    actionEnabled: Boolean,
-    showActionButton: Boolean
-) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        // External PDFs section
-        if (externalPdfs.isNotEmpty()) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "From Device",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        TextButton(onClick = onAddFromDevice) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Add More")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    externalPdfs.forEach { pdf ->
-                        ExternalPdfCard(
-                            pdf = pdf,
-                            onDelete = { onExternalPdfDelete(pdf) },
-                            onClick = { onExternalPdfToggle(pdf) }
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-            }
-        }
-        
-        // App documents
-        if (documents.isEmpty() && externalPdfs.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.FolderOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.outline
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("No documents found", fontWeight = FontWeight.Medium)
-                    Text(
-                        "Tap + to add PDFs from your device",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedButton(onClick = onAddFromDevice) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Add PDF from Device")
-                    }
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (documents.isNotEmpty()) {
-                    item {
-                        Text(
-                            if (multiSelect) "Select PDFs to merge" else "Select a PDF",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    
-                    items(documents) { doc ->
-                        SelectableDocumentCard(
-                            document = doc,
-                            isSelected = doc in selectedDocuments,
-                            onClick = { onDocumentToggle(doc) }
-                        )
-                    }
-                }
-            }
-        }
-        
-        // Action button
-        if (showActionButton) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shadowElevation = 8.dp
-            ) {
-                Button(
-                    onClick = onAction,
-                    enabled = actionEnabled,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text(actionLabel, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ExternalPdfCard(
-    pdf: ExternalPdfFile,
-    onDelete: () -> Unit,
-    onClick: () -> Unit
-) {
-    var showMenu by remember { mutableStateOf(false) }
-    
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // PDF Icon
-            Surface(
-                modifier = Modifier.size(50.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
-            ) {
-                Icon(
-                    Icons.Default.PictureAsPdf,
-                    contentDescription = null,
-                    modifier = Modifier.padding(12.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    pdf.name,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${pdf.pageCount} pages • ${PdfGenerator.formatFileSize(pdf.size)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            // 3-dot menu
-            Box {
-                IconButton(
-                    onClick = { showMenu = true },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "Options",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        onClick = {
-                            showMenu = false
-                            onDelete()
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectableDocumentCard(
-    document: Document,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    var showMenu by remember { mutableStateOf(false) }
-    
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) 
-                MaterialTheme.colorScheme.primaryContainer 
-            else MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        shape = RoundedCornerShape(12.dp),
-        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Thumbnail
-            document.thumbnailPath?.let { path ->
-                val bitmap = remember(path) {
-                    BitmapFactory.decodeFile(path)
-                }
-                bitmap?.let {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                }
-            } ?: run {
+            if (processing) {
                 Surface(
-                    modifier = Modifier.size(50.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
                 ) {
-                    Icon(
-                        Icons.Default.PictureAsPdf,
-                        contentDescription = null,
-                        modifier = Modifier.padding(12.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text("Processing locally…")
+                    }
                 }
             }
-            
-            Column(modifier = Modifier.weight(1f)) {
+        }
+    }
+}
+
+@Composable
+private fun PdfToolCard(
+    tool: Phase4PdfTool,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(tool.icon, contentDescription = null, modifier = Modifier.size(30.dp))
+            Spacer(Modifier.size(14.dp))
+            Column {
+                Text(tool.title, fontWeight = FontWeight.SemiBold)
                 Text(
-                    document.name,
+                    tool.subtitle,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectableDocumentRow(
+    name: String,
+    selected: Boolean,
+    onToggle: () -> Unit
+) {
+    Surface(
+        onClick = onToggle,
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = if (selected) 3.dp else 1.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = selected,
+                onCheckedChange = { onToggle() }
+            )
+            Text(
+                name,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectedSourceHeader(
+    name: String,
+    onChange: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Selected PDF", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    name,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    "${document.pageCount} pages • ${PdfGenerator.formatFileSize(document.size)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-            
-            // 3-dot menu
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "Options",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Select") },
-                        onClick = {
-                            showMenu = false
-                            onClick()
-                        },
-                        leadingIcon = {
-                            Icon(
-                                if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    )
-                }
+            OutlinedButton(onClick = onChange) {
+                Text("Change")
             }
         }
     }
 }
 
 @Composable
-private fun PageSelectionScreen(
-    documentName: String,
+private fun PageSelectionField(
+    value: String,
+    onValueChange: (String) -> Unit,
     pageCount: Int,
-    pageBitmaps: List<Bitmap>,
-    selectedPages: Set<Int>,
-    onPageToggle: (Int) -> Unit,
-    onSelectAll: () -> Unit,
-    onDeselectAll: () -> Unit,
-    actionLabel: String,
-    onAction: () -> Unit
+    label: String
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Document info and selection controls
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    documentName,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${selectedPages.size} of $pageCount pages selected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                
-                Spacer(modifier = Modifier.height(12.dp))
-                
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onSelectAll) {
-                        Text("Select All")
-                    }
-                    OutlinedButton(onClick = onDeselectAll) {
-                        Text("Deselect All")
-                    }
-                }
-            }
-        }
-        
-        // Page grid
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            val rows = (1..pageCount).chunked(3)
-            items(rows) { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    row.forEach { pageNum ->
-                        PageThumbnail(
-                            pageNumber = pageNum,
-                            bitmap = pageBitmaps.getOrNull(pageNum - 1),
-                            isSelected = pageNum in selectedPages,
-                            onClick = { onPageToggle(pageNum) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    // Fill empty spaces
-                    repeat(3 - row.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-        
-        // Action button
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shadowElevation = 8.dp
-        ) {
-            Button(
-                onClick = onAction,
-                enabled = selectedPages.isNotEmpty(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (actionLabel.contains("Remove")) 
-                        MaterialTheme.colorScheme.error 
-                    else MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Text("$actionLabel (${selectedPages.size})", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        supportingText = {
+            Text("Use commas/ranges, e.g. 1,3,5-8. This PDF has $pageCount pages.")
+        },
+        singleLine = true
+    )
 }
 
-@Composable
-private fun PageThumbnail(
-    pageNumber: Int,
-    bitmap: Bitmap?,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun shareExtractedImages(
+    context: android.content.Context,
+    paths: List<String>
 ) {
-    Card(
-        onClick = onClick,
-        modifier = modifier.aspectRatio(0.75f),
-        shape = RoundedCornerShape(8.dp),
-        border = if (isSelected) BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null,
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) 
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-            else MaterialTheme.colorScheme.surfaceContainerHigh
-        )
-    ) {
-        Box {
-            bitmap?.let {
-                Image(
-                    bitmap = it.asImageBitmap(),
-                    contentDescription = "Page $pageNumber",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
-            } ?: run {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                }
-            }
-            
-            // Page number badge
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(4.dp),
-                shape = RoundedCornerShape(4.dp),
-                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest
-            ) {
-                Text(
-                    "$pageNumber",
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                )
-            }
-            
-            // Selection checkmark
-            if (isSelected) {
-                Icon(
-                    Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                        .size(24.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
+    if (paths.isEmpty()) return
+
+    val uris = ArrayList(
+        paths.map { path ->
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                File(path)
+            )
         }
+    )
+
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "image/jpeg"
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
+    runCatching {
+        context.startActivity(Intent.createChooser(intent, "Share extracted pages"))
+    }.onFailure {
+        Toast.makeText(context, "No app can share these images", Toast.LENGTH_SHORT).show()
     }
 }

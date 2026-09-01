@@ -1,53 +1,65 @@
 package com.example.aidocumentscanner.pdf
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
-import android.os.Build
-import android.os.Environment
 import android.os.ParcelFileDescriptor
-import android.provider.MediaStore
 import android.util.Log
-import com.example.aidocumentscanner.ui.screens.SettingsPreferences
-import com.example.aidocumentscanner.ui.screens.StorageLocation
 import com.itextpdf.text.Document
 import com.itextpdf.text.Image
-import com.itextpdf.text.Rectangle
-import com.itextpdf.text.pdf.BaseFont
 import com.itextpdf.text.pdf.PdfCopy
 import com.itextpdf.text.pdf.PdfGState
+import com.itextpdf.text.pdf.PdfName
+import com.itextpdf.text.pdf.PdfNumber
 import com.itextpdf.text.pdf.PdfReader
 import com.itextpdf.text.pdf.PdfStamper
 import com.itextpdf.text.pdf.PdfWriter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.sqrt
+import kotlin.math.max
 
 /**
- * PDF operations kept compatible with the existing UI while Phase 2 removes unbounded rendering.
- * Phase 4 will redesign the PDF-tool workflows and optimization semantics.
+ * Phase-4 PDF editor.
+ *
+ * Design rule: tools that can preserve the source PDF structure must do so. In particular,
+ * optimization no longer rasterizes the document into JPEG pages.
  */
 object PdfEditor {
     private const val TAG = "PdfEditor"
-    private const val APP_FOLDER = "AIDocumentScanner"
     private const val MAX_EXPORT_DIMENSION = 2400
-    private const val LEGACY_THUMBNAIL_WIDTH = 180
+
+    data class OptimizationResult(
+        val outputPath: String,
+        val originalBytes: Long,
+        val optimizedBytes: Long
+    ) {
+        val savedBytes: Long get() = (originalBytes - optimizedBytes).coerceAtLeast(0L)
+        val reductionPercent: Double
+            get() = if (originalBytes <= 0L) 0.0
+            else savedBytes * 100.0 / originalBytes.toDouble()
+    }
 
     fun mergePdfs(
         context: Context,
         pdfPaths: List<String>,
         outputName: String
     ): Result<String> = runCatching {
-        val existing = pdfPaths.map(::File).filter { it.isFile }
-        require(existing.isNotEmpty()) { "No readable PDFs to merge" }
+        val inputs = pdfPaths.map(::File)
+        require(inputs.size >= 2) { "Choose at least two PDFs to merge" }
+        require(inputs.all { it.isFile && it.length() > 0L }) {
+            "One or more PDFs cannot be read"
+        }
 
-        val outputFile = createOutputFile(
+        val output = outputFile(
             context,
             "${sanitize(outputName)}_merged_${timestamp()}.pdf"
         )
@@ -55,52 +67,81 @@ object PdfEditor {
         val document = Document()
         var copy: PdfCopy? = null
         try {
-            copy = PdfCopy(document, FileOutputStream(outputFile))
+            copy = PdfCopy(document, FileOutputStream(output))
             document.open()
-            existing.forEach { file ->
-                var reader: PdfReader? = null
+
+            inputs.forEach { file ->
+                val reader = PdfReader(file.absolutePath)
                 try {
-                    reader = PdfReader(file.absolutePath)
-                    for (pageNumber in 1..reader.numberOfPages) {
-                        copy.addPage(copy.getImportedPage(reader, pageNumber))
+                    for (page in 1..reader.numberOfPages) {
+                        copy.addPage(copy.getImportedPage(reader, page))
                     }
                     copy.freeReader(reader)
                 } finally {
-                    reader?.close()
+                    reader.close()
                 }
             }
         } finally {
             if (document.isOpen) document.close()
         }
 
-        saveToPublicStorage(context, outputFile, outputFile.name)
-        outputFile.absolutePath
+        requirePdf(output)
+        output.absolutePath
     }
 
+    fun splitPdfGroups(
+        context: Context,
+        pdfPath: String,
+        groups: List<List<Int>>
+    ): Result<List<String>> = runCatching {
+        require(groups.size >= 2) { "At least two split groups are required" }
+
+        val reader = PdfReader(pdfPath)
+        try {
+            val total = reader.numberOfPages
+            val outputs = mutableListOf<String>()
+            groups.forEachIndexed { index, pages ->
+                val valid = pages.distinct().filter { it in 1..total }
+                require(valid.isNotEmpty()) { "Split group ${index + 1} has no valid pages" }
+
+                val output = outputFile(
+                    context,
+                    "${sanitize(File(pdfPath).nameWithoutExtension)}_part${index + 1}_${timestamp()}.pdf"
+                )
+                copyPages(reader, valid, output)
+                requirePdf(output)
+                outputs += output.absolutePath
+            }
+            outputs
+        } finally {
+            reader.close()
+        }
+    }
+
+    /** Compatibility wrapper retained for any existing caller. */
     fun splitPdf(
         context: Context,
         pdfPath: String,
         pageRanges: List<IntRange>
-    ): Result<List<String>> = runCatching {
-        require(pageRanges.isNotEmpty()) { "No page ranges supplied" }
+    ): Result<List<String>> =
+        splitPdfGroups(context, pdfPath, pageRanges.map { it.toList() })
+
+    fun splitPdfByPages(
+        context: Context,
+        pdfPath: String,
+        pagesToExtract: List<Int>
+    ): Result<String> = runCatching {
         val reader = PdfReader(pdfPath)
         try {
-            val totalPages = reader.numberOfPages
-            val outputs = mutableListOf<String>()
-            pageRanges.forEachIndexed { index, range ->
-                val pages = range.filter { it in 1..totalPages }
-                if (pages.isNotEmpty()) {
-                    val output = createOutputFile(
-                        context,
-                        "${sanitize(File(pdfPath).nameWithoutExtension)}_part${index + 1}_${timestamp()}.pdf"
-                    )
-                    copyPages(reader, pages, output)
-                    saveToPublicStorage(context, output, output.name)
-                    outputs += output.absolutePath
-                }
-            }
-            require(outputs.isNotEmpty()) { "No valid ranges to split" }
-            outputs
+            val valid = pagesToExtract.distinct().filter { it in 1..reader.numberOfPages }
+            require(valid.isNotEmpty()) { "No valid pages selected" }
+            val output = outputFile(
+                context,
+                "${sanitize(File(pdfPath).nameWithoutExtension)}_pages_${timestamp()}.pdf"
+            )
+            copyPages(reader, valid, output)
+            requirePdf(output)
+            output.absolutePath
         } finally {
             reader.close()
         }
@@ -113,31 +154,107 @@ object PdfEditor {
     ): Result<String> = runCatching {
         val reader = PdfReader(pdfPath)
         try {
-            val removeSet = pagesToRemove.toSet()
-            val keep = (1..reader.numberOfPages).filterNot(removeSet::contains)
-            require(keep.isNotEmpty()) { "Cannot remove all pages" }
+            val remove = pagesToRemove.toSet()
+            val keep = (1..reader.numberOfPages).filterNot(remove::contains)
+            require(remove.isNotEmpty()) { "No pages selected" }
+            require(keep.isNotEmpty()) { "Cannot remove every page" }
 
-            val output = createOutputFile(
+            val output = outputFile(
                 context,
-                "${sanitize(File(pdfPath).nameWithoutExtension)}_edited_${timestamp()}.pdf"
+                "${sanitize(File(pdfPath).nameWithoutExtension)}_pages_removed_${timestamp()}.pdf"
             )
             copyPages(reader, keep, output)
-            saveToPublicStorage(context, output, output.name)
+            requirePdf(output)
             output.absolutePath
         } finally {
             reader.close()
         }
     }
 
-    fun extractPagesAsImages(
+    fun reorderPages(
+        context: Context,
+        pdfPath: String,
+        pageOrder: List<Int>
+    ): Result<String> = runCatching {
+        val reader = PdfReader(pdfPath)
+        try {
+            val total = reader.numberOfPages
+            require(pageOrder.size == total) { "Page order must contain all $total pages" }
+            require(pageOrder.toSet().size == total) { "Each page must appear exactly once" }
+            require(pageOrder.all { it in 1..total }) { "Page order is out of range" }
+
+            val output = outputFile(
+                context,
+                "${sanitize(File(pdfPath).nameWithoutExtension)}_reordered_${timestamp()}.pdf"
+            )
+            copyPages(reader, pageOrder, output)
+            requirePdf(output)
+            output.absolutePath
+        } finally {
+            reader.close()
+        }
+    }
+
+    fun rotatePages(
+        context: Context,
+        pdfPath: String,
+        pages: List<Int>,
+        degreesClockwise: Int
+    ): Result<String> = runCatching {
+        require(degreesClockwise in listOf(90, 180, 270)) {
+            "Rotation must be 90, 180 or 270 degrees"
+        }
+
+        val reader = PdfReader(pdfPath)
+        val output = outputFile(
+            context,
+            "${sanitize(File(pdfPath).nameWithoutExtension)}_rotated_${timestamp()}.pdf"
+        )
+        var stamper: PdfStamper? = null
+        try {
+            val valid = pages.distinct().filter { it in 1..reader.numberOfPages }
+            require(valid.isNotEmpty()) { "No valid pages selected" }
+
+            stamper = PdfStamper(reader, FileOutputStream(output))
+            valid.forEach { pageNumber ->
+                val pageDictionary = reader.getPageN(pageNumber)
+                val current = pageDictionary.getAsNumber(PdfName.ROTATE)?.intValue() ?: 0
+                val next = ((current + degreesClockwise) % 360 + 360) % 360
+                pageDictionary.put(PdfName.ROTATE, PdfNumber(next))
+            }
+        } finally {
+            runCatching { stamper?.close() }
+            reader.close()
+        }
+
+        requirePdf(output)
+        output.absolutePath
+    }
+
+    /**
+     * Extracts selected pages to app-private JPEG files. The UI shares them through FileProvider,
+     * so Android 8/9 also work without WRITE_EXTERNAL_STORAGE.
+     */
+    fun extractPagesAsImageFiles(
         context: Context,
         pdfPath: String,
         pagesToExtract: List<Int>
-    ): Result<Int> = runCatching {
-        val file = File(pdfPath)
-        require(file.isFile) { "PDF file does not exist" }
+    ): Result<List<String>> = runCatching {
+        val source = File(pdfPath)
+        require(source.isFile) { "PDF file does not exist" }
 
-        val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        val exportDir = File(
+            context.filesDir,
+            "pdf_tools/exports/${sanitize(source.nameWithoutExtension)}_${timestamp()}"
+        )
+        require(exportDir.mkdirs() || exportDir.isDirectory) {
+            "Could not create export folder"
+        }
+
+        val descriptor = ParcelFileDescriptor.open(
+            source,
+            ParcelFileDescriptor.MODE_READ_ONLY
+        )
         val renderer = try {
             PdfRenderer(descriptor)
         } catch (error: Throwable) {
@@ -146,175 +263,104 @@ object PdfEditor {
         }
 
         try {
-            val validPages = pagesToExtract.distinct().sorted().filter { it in 1..renderer.pageCount }
-            require(validPages.isNotEmpty()) { "No valid pages to extract" }
+            val valid = pagesToExtract
+                .distinct()
+                .sorted()
+                .filter { it in 1..renderer.pageCount }
+            require(valid.isNotEmpty()) { "No valid pages selected" }
 
-            var saved = 0
-            validPages.forEach { pageNumber ->
+            valid.map { pageNumber ->
                 renderer.openPage(pageNumber - 1).use { page ->
-                    val bitmap = renderBoundedPage(page, MAX_EXPORT_DIMENSION, Bitmap.Config.ARGB_8888)
+                    val bitmap = renderBoundedPage(page, MAX_EXPORT_DIMENSION)
                     try {
-                        val name = "${sanitize(file.nameWithoutExtension)}_page${pageNumber}_${timestamp()}.jpg"
-                        if (saveImage(context, bitmap, name)) saved++
+                        val file = File(
+                            exportDir,
+                            "${sanitize(source.nameWithoutExtension)}_page_$pageNumber.jpg"
+                        )
+                        FileOutputStream(file).use { output ->
+                            require(
+                                bitmap.compress(
+                                    Bitmap.CompressFormat.JPEG,
+                                    92,
+                                    output
+                                )
+                            ) { "Could not encode page $pageNumber" }
+                        }
+                        file.absolutePath
                     } finally {
                         if (!bitmap.isRecycled) bitmap.recycle()
                     }
                 }
             }
-            saved
         } finally {
             renderer.close()
             descriptor.close()
         }
     }
 
-    fun splitPdfByPages(
+    /** Compatibility count API for old code outside the Phase-4 screen. */
+    fun extractPagesAsImages(
         context: Context,
         pdfPath: String,
         pagesToExtract: List<Int>
-    ): Result<String> = runCatching {
-        val reader = PdfReader(pdfPath)
-        try {
-            val pages = pagesToExtract.distinct().sorted().filter { it in 1..reader.numberOfPages }
-            require(pages.isNotEmpty()) { "No valid pages to extract" }
-
-            val output = createOutputFile(
-                context,
-                "${sanitize(File(pdfPath).nameWithoutExtension)}_split_${timestamp()}.pdf"
-            )
-            copyPages(reader, pages, output)
-            saveToPublicStorage(context, output, output.name)
-            output.absolutePath
-        } finally {
-            reader.close()
-        }
-    }
-
-    fun getPageCount(pdfPath: String): Int {
-        var reader: PdfReader? = null
-        return try {
-            reader = PdfReader(pdfPath)
-            reader.numberOfPages
-        } catch (error: Exception) {
-            Log.e(TAG, "Unable to read page count", error)
-            0
-        } finally {
-            reader?.close()
-        }
-    }
-
-    /** Render exactly one page. This is the preferred preview API. */
-    fun renderPageToBitmap(
-        context: Context,
-        pdfPath: String,
-        pageIndex: Int,
-        maxWidth: Int = 1200
-    ): Bitmap? {
-        val file = File(pdfPath)
-        if (!file.isFile) return null
-
-        var descriptor: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        return try {
-            descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = PdfRenderer(descriptor)
-            if (pageIndex !in 0 until renderer.pageCount) return null
-            renderer.openPage(pageIndex).use { page ->
-                renderPageForWidth(page, maxWidth.coerceIn(120, 1600), Bitmap.Config.RGB_565)
-            }
-        } catch (error: Exception) {
-            Log.e(TAG, "Unable to render page $pageIndex", error)
-            null
-        } finally {
-            runCatching { renderer?.close() }
-            runCatching { descriptor?.close() }
-        }
-    }
+    ): Result<Int> =
+        extractPagesAsImageFiles(context, pdfPath, pagesToExtract)
+            .map { it.size }
 
     /**
-     * Compatibility API for the pre-Phase-4 PDF tools screen.
-     * It intentionally renders tiny RGB_565 thumbnails rather than full pages. Do not use this for
-     * the main viewer. Phase 4 must remove this all-pages API from PDF Tools entirely.
+     * Adds a translucent raster watermark only; source PDF pages remain intact.
+     * Rendering the watermark into a bitmap lets Android font fallback handle more scripts
+     * than Helvetica/WINANSI.
      */
-    fun renderAllPagesToBitmap(context: Context, pdfPath: String): List<Bitmap> {
-        val result = mutableListOf<Bitmap>()
-        val file = File(pdfPath)
-        if (!file.isFile) return result
-
-        var descriptor: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        try {
-            descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = PdfRenderer(descriptor)
-            for (pageIndex in 0 until renderer.pageCount) {
-                renderer.openPage(pageIndex).use { page ->
-                    result += renderPageForWidth(
-                        page,
-                        LEGACY_THUMBNAIL_WIDTH,
-                        Bitmap.Config.RGB_565
-                    )
-                }
-            }
-        } catch (error: Exception) {
-            Log.e(TAG, "Unable to render legacy thumbnails", error)
-            result.forEach { if (!it.isRecycled) it.recycle() }
-            result.clear()
-        } finally {
-            runCatching { renderer?.close() }
-            runCatching { descriptor?.close() }
-        }
-        return result
-    }
-
     fun addWatermark(
         context: Context,
         pdfPath: String,
         watermarkText: String
     ): Result<String> = runCatching {
-        require(watermarkText.isNotBlank()) { "Watermark text is empty" }
+        val text = watermarkText.trim()
+        require(text.isNotEmpty()) { "Watermark text is empty" }
+        require(text.length <= 80) { "Watermark is too long" }
+
         val reader = PdfReader(pdfPath)
-        val output = createOutputFile(
+        val output = outputFile(
             context,
             "${sanitize(File(pdfPath).nameWithoutExtension)}_watermarked_${timestamp()}.pdf"
         )
+        val watermarkBytes = createWatermarkPng(text)
+
         var stamper: PdfStamper? = null
         try {
             stamper = PdfStamper(reader, FileOutputStream(output))
-            val font = BaseFont.createFont(
-                BaseFont.HELVETICA,
-                BaseFont.WINANSI,
-                BaseFont.NOT_EMBEDDED
-            )
+
             for (pageNumber in 1..reader.numberOfPages) {
                 val pageSize = reader.getPageSizeWithRotation(pageNumber)
-                val canvas = stamper.getOverContent(pageNumber)
-                canvas.saveState()
+                val image = Image.getInstance(watermarkBytes)
+                image.setRotationDegrees(35f)
+
+                val maxWidth = pageSize.width * 0.72f
+                val maxHeight = pageSize.height * 0.24f
+                image.scaleToFit(maxWidth, maxHeight)
+                image.setAbsolutePosition(
+                    (pageSize.width - image.scaledWidth) / 2f,
+                    (pageSize.height - image.scaledHeight) / 2f
+                )
+
+                val content = stamper.getOverContent(pageNumber)
+                content.saveState()
                 try {
-                    val state = PdfGState().apply {
-                        setFillOpacity(0.30f)
-                        setStrokeOpacity(0.30f)
-                    }
-                    canvas.setGState(state)
-                    canvas.beginText()
-                    canvas.setFontAndSize(font, 52f)
-                    canvas.setColorFill(com.itextpdf.text.BaseColor.GRAY)
-                    canvas.showTextAligned(
-                        com.itextpdf.text.Element.ALIGN_CENTER,
-                        watermarkText,
-                        pageSize.width / 2f,
-                        pageSize.height / 2f,
-                        45f
-                    )
-                    canvas.endText()
+                    val state = PdfGState().apply { setFillOpacity(0.30f) }
+                    content.setGState(state)
+                    content.addImage(image)
                 } finally {
-                    canvas.restoreState()
+                    content.restoreState()
                 }
             }
         } finally {
             runCatching { stamper?.close() }
             reader.close()
         }
-        saveToPublicStorage(context, output, output.name)
+
+        requirePdf(output)
         output.absolutePath
     }
 
@@ -323,18 +369,21 @@ object PdfEditor {
         pdfPath: String,
         password: String
     ): Result<String> = runCatching {
-        require(password.isNotEmpty()) { "Password cannot be empty" }
+        require(password.length >= 6) { "Use at least 6 characters" }
+
         val reader = PdfReader(pdfPath)
-        val output = createOutputFile(
+        val output = outputFile(
             context,
             "${sanitize(File(pdfPath).nameWithoutExtension)}_protected_${timestamp()}.pdf"
         )
+
+        val ownerPassword = ByteArray(32).also(SecureRandom()::nextBytes)
         var stamper: PdfStamper? = null
         try {
             stamper = PdfStamper(reader, FileOutputStream(output))
             stamper.setEncryption(
                 password.toByteArray(Charsets.UTF_8),
-                java.util.UUID.randomUUID().toString().toByteArray(Charsets.UTF_8),
+                ownerPassword,
                 PdfWriter.ALLOW_PRINTING,
                 PdfWriter.ENCRYPTION_AES_128
             )
@@ -342,81 +391,139 @@ object PdfEditor {
             runCatching { stamper?.close() }
             reader.close()
         }
-        saveToPublicStorage(context, output, output.name)
+
+        requirePdf(output)
         output.absolutePath
     }
 
     /**
-     * Compatibility optimizer. It is now bounded to one page bitmap at a time, preventing the old
-     * memory spikes. Phase 4 will replace the rasterizing algorithm because it can remove text,
-     * links, vectors, forms and annotations.
+     * Structure-preserving optimization.
+     *
+     * It removes unused PDF objects and enables full compression. It intentionally does NOT
+     * render pages to bitmaps, so text/searchability, vector graphics, links, form fields and
+     * annotations are not deliberately discarded.
+     */
+    fun optimizePdfStructure(
+        context: Context,
+        pdfPath: String
+    ): Result<OptimizationResult> = runCatching {
+        val source = File(pdfPath)
+        require(source.isFile && source.length() > 0L) { "PDF file does not exist" }
+
+        val candidate = outputFile(
+            context,
+            "${sanitize(source.nameWithoutExtension)}_optimized_${timestamp()}.pdf"
+        )
+
+        val reader = PdfReader(source.absolutePath)
+        var stamper: PdfStamper? = null
+        try {
+            reader.removeUnusedObjects()
+            stamper = PdfStamper(reader, FileOutputStream(candidate))
+            stamper.setFullCompression()
+        } finally {
+            runCatching { stamper?.close() }
+            reader.close()
+        }
+
+        requirePdf(candidate)
+
+        val finalOutput: File
+        if (candidate.length() <= source.length()) {
+            finalOutput = candidate
+        } else {
+            // Never make the user's "optimized" derivative larger.
+            runCatching { candidate.delete() }
+            finalOutput = outputFile(
+                context,
+                "${sanitize(source.nameWithoutExtension)}_optimized_copy_${timestamp()}.pdf"
+            )
+            source.copyTo(finalOutput, overwrite = true)
+        }
+
+        OptimizationResult(
+            outputPath = finalOutput.absolutePath,
+            originalBytes = source.length(),
+            optimizedBytes = finalOutput.length()
+        )
+    }
+
+    /**
+     * Legacy signature retained so any caller missed during integration still preserves content.
+     * The quality parameter is intentionally ignored; Phase 4 removed rasterizing quality modes.
      */
     fun optimizePdf(
         context: Context,
         pdfPath: String,
         quality: Int = 60
-    ): Result<String> = runCatching {
-        val safeQuality = quality.coerceIn(20, 95)
-        val source = File(pdfPath)
-        require(source.isFile) { "PDF file does not exist" }
-        val output = createOutputFile(
-            context,
-            "${sanitize(source.nameWithoutExtension)}_optimized_${timestamp()}.pdf"
-        )
+    ): Result<String> =
+        optimizePdfStructure(context, pdfPath).map { it.outputPath }
 
-        val descriptor = ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY)
-        val renderer = try {
-            PdfRenderer(descriptor)
+    fun getPageCount(pdfPath: String): Int {
+        var reader: PdfReader? = null
+        return try {
+            reader = PdfReader(pdfPath)
+            reader.numberOfPages
         } catch (error: Throwable) {
-            descriptor.close()
-            throw error
-        }
-
-        val document = Document()
-        try {
-            val writer = PdfWriter.getInstance(document, FileOutputStream(output))
-            writer.setFullCompression()
-            document.open()
-
-            for (pageIndex in 0 until renderer.pageCount) {
-                renderer.openPage(pageIndex).use { page ->
-                    val targetDimension = when {
-                        safeQuality <= 45 -> 1100
-                        safeQuality <= 70 -> 1500
-                        else -> 1900
-                    }
-                    val bitmap = renderBoundedPage(
-                        page,
-                        targetDimension,
-                        Bitmap.Config.RGB_565
-                    )
-                    try {
-                        val bytes = ByteArrayOutputStream().use { stream ->
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, safeQuality, stream)
-                            stream.toByteArray()
-                        }
-                        val image = Image.getInstance(bytes)
-                        val pageRect = Rectangle(image.scaledWidth, image.scaledHeight)
-                        document.setPageSize(pageRect)
-                        document.newPage()
-                        image.setAbsolutePosition(0f, 0f)
-                        document.add(image)
-                    } finally {
-                        if (!bitmap.isRecycled) bitmap.recycle()
-                    }
-                }
-            }
+            Log.e(TAG, "Could not read page count", error)
+            0
         } finally {
-            if (document.isOpen) document.close()
-            renderer.close()
-            descriptor.close()
+            reader?.close()
         }
-
-        saveToPublicStorage(context, output, output.name)
-        output.absolutePath
     }
 
-    private fun copyPages(reader: PdfReader, pages: List<Int>, output: File) {
+    fun renderPageToBitmap(
+        context: Context,
+        pdfPath: String,
+        pageIndex: Int,
+        maxWidth: Int = 1200
+    ): Bitmap? {
+        val source = File(pdfPath)
+        if (!source.isFile) return null
+
+        var descriptor: ParcelFileDescriptor? = null
+        var renderer: PdfRenderer? = null
+
+        return try {
+            descriptor = ParcelFileDescriptor.open(
+                source,
+                ParcelFileDescriptor.MODE_READ_ONLY
+            )
+            renderer = PdfRenderer(descriptor)
+            if (pageIndex !in 0 until renderer.pageCount) return null
+
+            renderer.openPage(pageIndex).use { page ->
+                val width = maxWidth.coerceIn(120, 1600)
+                val scale = width.toFloat() / page.width.coerceAtLeast(1)
+                val height = (page.height * scale).toInt().coerceAtLeast(1)
+                Bitmap.createBitmap(
+                    width,
+                    height,
+                    Bitmap.Config.RGB_565
+                ).also { bitmap ->
+                    bitmap.eraseColor(Color.WHITE)
+                    page.render(
+                        bitmap,
+                        null,
+                        null,
+                        PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            Log.e(TAG, "Could not render page", error)
+            null
+        } finally {
+            runCatching { renderer?.close() }
+            runCatching { descriptor?.close() }
+        }
+    }
+
+    private fun copyPages(
+        reader: PdfReader,
+        pages: List<Int>,
+        output: File
+    ) {
         val document = Document()
         try {
             val copy = PdfCopy(document, FileOutputStream(output))
@@ -429,123 +536,91 @@ object PdfEditor {
         }
     }
 
-    private fun renderPageForWidth(
-        page: PdfRenderer.Page,
-        width: Int,
-        config: Bitmap.Config
-    ): Bitmap {
-        val safeWidth = width.coerceAtLeast(1)
-        val ratio = safeWidth.toFloat() / page.width.toFloat().coerceAtLeast(1f)
-        val height = (page.height * ratio).toInt().coerceAtLeast(1)
-        return Bitmap.createBitmap(safeWidth, height, config).also { bitmap ->
-            bitmap.eraseColor(Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-        }
-    }
-
     private fun renderBoundedPage(
         page: PdfRenderer.Page,
-        maxDimension: Int,
-        config: Bitmap.Config
+        maxDimension: Int
     ): Bitmap {
-        val largest = maxOf(page.width, page.height).coerceAtLeast(1)
+        val largest = max(page.width, page.height).coerceAtLeast(1)
         val scale = if (largest > maxDimension) {
             maxDimension.toFloat() / largest.toFloat()
-        } else {
-            1f
-        }
+        } else 1f
+
         val width = (page.width * scale).toInt().coerceAtLeast(1)
         val height = (page.height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createBitmap(width, height, config).also { bitmap ->
+
+        return Bitmap.createBitmap(
+            width,
+            height,
+            Bitmap.Config.ARGB_8888
+        ).also { bitmap ->
             bitmap.eraseColor(Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+            page.render(
+                bitmap,
+                null,
+                null,
+                PdfRenderer.Page.RENDER_MODE_FOR_PRINT
+            )
         }
     }
 
-    private fun saveImage(context: Context, bitmap: Bitmap, fileName: String): Boolean {
+    private fun createWatermarkPng(text: String): ByteArray {
+        val width = 1200
+        val height = 220
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(105, 85, 85, 85)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = 92f
+        }
+
+        var size = 92f
+        while (paint.measureText(text) > width * 0.92f && size > 30f) {
+            size -= 4f
+            paint.textSize = size
+        }
+
+        val y = height / 2f - (paint.ascent() + paint.descent()) / 2f
+        canvas.drawText(text, width / 2f, y, paint)
+
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                        "${Environment.DIRECTORY_PICTURES}/$APP_FOLDER"
-                    )
-                }
-                val uri = context.contentResolver.insert(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    values
-                ) ?: return false
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output)
-                } ?: return false
-                true
-            } else {
-                // Phase 1 intentionally removed broad WRITE_EXTERNAL_STORAGE. Use the app-specific
-                // external Pictures directory on Android 8/9; Phase 4 can add an explicit SAF export.
-                val baseDirectory =
-                    context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
-                val directory = File(baseDirectory, APP_FOLDER)
-                directory.mkdirs()
-                val output = File(directory, fileName)
-                FileOutputStream(output).use {
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it)
-                }
-                true
+            ByteArrayOutputStream().use { stream ->
+                require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
+                stream.toByteArray()
             }
-        } catch (error: Exception) {
-            Log.e(TAG, "Unable to save extracted image", error)
-            false
+        } finally {
+            bitmap.recycle()
         }
     }
 
-    private fun saveToPublicStorage(context: Context, sourceFile: File, fileName: String) {
-        val storageLocation = SettingsPreferences.getStorageLocation(context)
-        if (storageLocation == StorageLocation.INTERNAL) return
+    private fun outputFile(context: Context, name: String): File {
+        val dir = File(context.filesDir, "pdf_tools")
+        require(dir.exists() || dir.mkdirs()) { "Could not create PDF tools folder" }
 
-        // With Phase-1's permission cleanup, direct public-folder writes are intentionally disabled
-        // on Android 8/9. The internal file remains authoritative and shareable via FileProvider.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            Log.i(TAG, "Skipping legacy public PDF copy; SAF export will replace it in Phase 4")
-            return
+        var candidate = File(dir, name)
+        var counter = 1
+        while (candidate.exists()) {
+            candidate = File(
+                dir,
+                "${candidate.nameWithoutExtension}_$counter.pdf"
+            )
+            counter++
         }
-
-        runCatching {
-            val relativePath = when (storageLocation) {
-                StorageLocation.DOCUMENTS -> "${Environment.DIRECTORY_DOCUMENTS}/$APP_FOLDER"
-                StorageLocation.DOWNLOADS -> "${Environment.DIRECTORY_DOWNLOADS}/$APP_FOLDER"
-                StorageLocation.INTERNAL -> return
-            }
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-            }
-            val uri = context.contentResolver.insert(
-                MediaStore.Files.getContentUri("external"),
-                values
-            ) ?: return@runCatching
-            context.contentResolver.openOutputStream(uri)?.use { output ->
-                sourceFile.inputStream().use { input -> input.copyTo(output) }
-            }
-        }.onFailure { error ->
-            Log.e(TAG, "Unable to make optional public PDF copy", error)
-        }
+        return candidate
     }
 
-    private fun createOutputFile(context: Context, fileName: String): File {
-        val directory = File(context.filesDir, "documents")
-        require(directory.exists() || directory.mkdirs()) { "Unable to create documents directory" }
-        return File(directory, fileName)
+    private fun requirePdf(file: File) {
+        require(file.isFile && file.length() > 0L) { "Output PDF was not created" }
+        require(getPageCount(file.absolutePath) > 0) { "Output PDF is unreadable" }
     }
 
-    private fun sanitize(name: String): String =
-        name.removeSuffix(".pdf")
-            .replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            .trim('_')
+    private fun sanitize(value: String): String =
+        value
+            .replace(Regex("[^a-zA-Z0-9._ -]"), "_")
+            .trim()
             .take(80)
-            .ifBlank { "document" }
+            .ifBlank { "Document" }
 
     private fun timestamp(): String =
         SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())

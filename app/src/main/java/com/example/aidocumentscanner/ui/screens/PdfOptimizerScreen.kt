@@ -1,342 +1,281 @@
 package com.example.aidocumentscanner.ui.screens
 
-import android.widget.Toast
-import androidx.compose.animation.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
+import com.example.aidocumentscanner.pdf.PdfDocumentRegistrar
 import com.example.aidocumentscanner.pdf.PdfEditor
 import com.example.aidocumentscanner.pdf.PdfGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-
-enum class QualityLevel(
-    val label: String,
-    val description: String,
-    val dpi: Int,
-    val jpegQuality: Int,
-    val sizeReduction: String
-) {
-    LOW("Low", "Maximum compression", 72, 50, "~70% smaller"),
-    BALANCED("Balanced", "Good quality & size", 150, 75, "~40% smaller"),
-    HIGH("High", "Best quality", 300, 90, "~20% smaller"),
-    WHATSAPP("WhatsApp Ready", "Optimized for sharing", 100, 60, "<2 MB guaranteed")
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfOptimizerScreen(
+    initialDocumentId: Long? = null,
     onBack: () -> Unit,
     onOptimized: (Long) -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val repository = remember { DocumentRepository(context) }
     val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
-    
-    var selectedDocument by remember { mutableStateOf<Document?>(null) }
-    var selectedQuality by remember { mutableStateOf(QualityLevel.BALANCED) }
-    var isProcessing by remember { mutableStateOf(false) }
-    var estimatedSize by remember { mutableStateOf<Long?>(null) }
-    
-    // Calculate estimated size when quality changes
-    LaunchedEffect(selectedDocument, selectedQuality) {
-        selectedDocument?.let { doc ->
-            val originalSize = doc.size
-            val reductionFactor = when (selectedQuality) {
-                QualityLevel.LOW -> 0.3f
-                QualityLevel.BALANCED -> 0.6f
-                QualityLevel.HIGH -> 0.8f
-                QualityLevel.WHATSAPP -> 0.25f
-            }
-            estimatedSize = (originalSize * reductionFactor).toLong()
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+
+    var selected by remember { mutableStateOf<Document?>(null) }
+    var processing by remember { mutableStateOf(false) }
+    var lastResult by remember { mutableStateOf<PdfEditor.OptimizationResult?>(null) }
+
+    LaunchedEffect(initialDocumentId, documents) {
+        if (selected == null && initialDocumentId != null && initialDocumentId > 0L) {
+            selected = documents.firstOrNull { it.id == initialDocumentId }
+                ?: withContext(Dispatchers.IO) {
+                    repository.getDocumentById(initialDocumentId)
+                }
         }
     }
-    
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("PDF Optimizer", fontWeight = FontWeight.Bold)
+                        Text("Safe PDF Optimizer", fontWeight = FontWeight.Bold)
                         Text(
-                            "Reduce file size for easy sharing",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "Preserves document structure",
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (selectedDocument != null) {
-                            selectedDocument = null
-                        } else {
-                            onBack()
+                    IconButton(
+                        onClick = {
+                            if (selected != null && initialDocumentId == null) {
+                                selected = null
+                                lastResult = null
+                            } else {
+                                onBack()
+                            }
                         }
-                    }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
         }
-    ) { paddingValues ->
-        if (selectedDocument == null) {
-            // Document selection
-            if (documents.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
+    ) { padding ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            if (selected == null) {
+                LazyColumn(
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.FolderOff,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.outline
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("No documents to optimize", fontWeight = FontWeight.Medium)
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Icon(Icons.Default.Compress, contentDescription = null)
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "What this optimizer does",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    "It removes unused PDF objects and enables full PDF " +
+                                        "compression. It does not intentionally rasterize pages, " +
+                                        "so searchable text, links, vectors, forms and annotations " +
+                                        "are preserved as far as the PDF library can preserve them."
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Some already-compressed PDFs may become 0% smaller. " +
+                                        "DocuScan will not create a larger optimized copy.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+
+                    items(documents, key = { it.id }) { document ->
+                        Surface(
+                            onClick = {
+                                selected = document
+                                lastResult = null
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            tonalElevation = 1.dp
+                        ) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp)
+                            ) {
+                                Text(
+                                    document.name,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${document.pageCount} pages • " +
+                                        PdfGenerator.formatFileSize(document.size),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
                     }
                 }
             } else {
-                LazyColumn(
+                val document = selected!!
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(paddingValues),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    item {
-                        Text(
-                            "Select a PDF to optimize",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(document.name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${document.pageCount} pages • " +
+                                    PdfGenerator.formatFileSize(document.size)
+                            )
+                        }
                     }
-                    
-                    items(documents) { doc ->
-                        Card(
-                            onClick = { selectedDocument = doc },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+
+                    Text(
+                        "No guessed reduction percentage is shown. The app measures the " +
+                            "real output after optimization.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    lastResult?.let { result ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.PictureAsPdf,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(40.dp)
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    "Actual result",
+                                    fontWeight = FontWeight.SemiBold
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        doc.name,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                Text(
+                                    "${PdfGenerator.formatFileSize(result.originalBytes)} → " +
+                                        PdfGenerator.formatFileSize(result.optimizedBytes)
+                                )
+                                Text(
+                                    String.format(
+                                        java.util.Locale.US,
+                                        "%.1f%% smaller",
+                                        result.reductionPercent
                                     )
-                                    Text(
-                                        "${doc.pageCount} pages • ${PdfGenerator.formatFileSize(doc.size)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Icon(Icons.Default.ChevronRight, contentDescription = null)
+                                )
                             }
                         }
+                    }
+
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !processing,
+                        onClick = {
+                            scope.launch {
+                                processing = true
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        PdfEditor.optimizePdfStructure(
+                                            context,
+                                            document.pdfPath
+                                        ).getOrThrow()
+                                    }
+                                    lastResult = result
+
+                                    val id = withContext(Dispatchers.IO) {
+                                        PdfDocumentRegistrar.register(
+                                            context,
+                                            repository,
+                                            result.outputPath,
+                                            "${document.name}_optimized"
+                                        )
+                                    }
+                                    onOptimized(id)
+                                } catch (error: Throwable) {
+                                    snackbar.showSnackbar(
+                                        error.message ?: "Optimization failed"
+                                    )
+                                } finally {
+                                    processing = false
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Optimize safely")
                     }
                 }
             }
-        } else {
-            // Optimization options
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Document info card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                    )
+
+            if (processing) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Column {
-                            Text(
-                                selectedDocument!!.name,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                "Original: ${PdfGenerator.formatFileSize(selectedDocument!!.size)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        estimatedSize?.let { size ->
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text("→", color = MaterialTheme.colorScheme.primary)
-                                Text(
-                                    "~${PdfGenerator.formatFileSize(size)}",
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-                
-                Text(
-                    "Select Quality",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                // Quality options
-                QualityLevel.entries.forEach { quality ->
-                    val isSelected = selectedQuality == quality
-                    Card(
-                        onClick = { selectedQuality = quality },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerHigh
-                        ),
-                        border = if (isSelected)
-                            androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                        else null
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            RadioButton(
-                                selected = isSelected,
-                                onClick = { selectedQuality = quality }
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(quality.label, fontWeight = FontWeight.Medium)
-                                Text(
-                                    quality.description,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (quality == QualityLevel.WHATSAPP)
-                                    Color(0xFF25D366).copy(alpha = 0.2f)
-                                else MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Text(
-                                    quality.sizeReduction,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (quality == QualityLevel.WHATSAPP)
-                                        Color(0xFF25D366) 
-                                    else MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.weight(1f))
-                
-                // Optimize button
-                Button(
-                    onClick = {
-                        isProcessing = true
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                PdfEditor.optimizePdf(
-                                    context,
-                                    selectedDocument!!.pdfPath,
-                                    selectedQuality.jpegQuality
-                                )
-                            }
-                            
-                            result.onSuccess { newPath ->
-                                val newDoc = Document(
-                                    name = "${selectedDocument!!.name}_optimized",
-                                    pdfPath = newPath,
-                                    thumbnailPath = selectedDocument!!.thumbnailPath,
-                                    pageCount = selectedDocument!!.pageCount,
-                                    size = File(newPath).length()
-                                )
-                                val docId = repository.insertDocument(newDoc)
-                                Toast.makeText(context, "PDF optimized successfully!", Toast.LENGTH_SHORT).show()
-                                onOptimized(docId)
-                            }
-                            
-                            result.onFailure { error ->
-                                Toast.makeText(context, "Error: ${error.message}", Toast.LENGTH_LONG).show()
-                            }
-                            
-                            isProcessing = false
-                        }
-                    },
-                    enabled = !isProcessing,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    if (isProcessing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Optimizing...")
-                    } else {
-                        Icon(Icons.Default.Compress, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Optimize PDF", fontWeight = FontWeight.Bold)
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text("Optimizing locally…")
                     }
                 }
             }
