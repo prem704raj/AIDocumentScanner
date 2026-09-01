@@ -38,12 +38,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+import androidx.compose.material.icons.filled.TextFields
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfViewerScreen(
     documentId: Long,
     initialPage: Int = 0,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOcrClick: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DocumentRepository(context) }
@@ -85,6 +88,9 @@ fun PdfViewerScreen(
                 },
                 actions = {
                     document?.let { doc ->
+                        IconButton(onClick = { onOcrClick(doc.id) }) {
+                            Icon(Icons.Default.TextFields, contentDescription = "Extract text (OCR)")
+                        }
                         IconButton(onClick = { shareDocument(context, doc) }) {
                             Icon(Icons.Default.Share, contentDescription = "Share")
                         }

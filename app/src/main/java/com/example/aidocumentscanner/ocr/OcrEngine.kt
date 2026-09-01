@@ -9,21 +9,27 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
-import kotlin.math.max
 import kotlin.math.sqrt
 
+/**
+ * Bundled, offline ML Kit OCR engine.
+ *
+ * Phase 5 changes:
+ * - recognizer can never be "half initialized"
+ * - PDF rendering is bounded
+ * - page progress is exposed
+ * - page boundaries are persisted through OcrTextCodec
+ * - no fake confidence value
+ */
 object OcrEngine {
-
     private const val TAG = "OcrEngine"
-    private const val MAX_RENDER_PIXELS = 4_000_000L
-    const val PAGE_SEPARATOR = "\u000C"
+    private const val MAX_OCR_PIXELS = 4_000_000L
 
     data class TextBlock(
         val text: String,
@@ -34,9 +40,7 @@ object OcrEngine {
 
     data class OcrResult(
         val fullText: String,
-        val blocks: List<TextBlock>,
-        /** ML Kit text-recognition does not expose a document-level confidence value. */
-        val confidence: Float = 0f
+        val blocks: List<TextBlock>
     )
 
     data class PageOcrResult(
@@ -53,88 +57,64 @@ object OcrEngine {
         val matchedText: String
     )
 
-    enum class ModelStatus {
-        NOT_DOWNLOADED,
-        DOWNLOADING,
-        DOWNLOADED,
-        FAILED
-    }
-
-    private val recognizer: TextRecognizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    private val recognizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
     fun initialize(context: Context) {
-        // The currently used com.google.mlkit:text-recognition artifact is bundled.
-        // Touch the lazy recognizer so failures happen during initialization rather than mid-search.
+        // Bundled Latin recognizer requires no model-download UI.
         recognizer
     }
 
     fun isModelReady(): Boolean = true
 
     fun downloadModel(context: Context, onComplete: (Boolean) -> Unit) {
-        return try {
-            initialize(context)
-            onComplete(true)
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to initialize OCR", t)
-            onComplete(false)
-        }
+        initialize(context)
+        onComplete(true)
     }
 
     suspend fun extractText(bitmap: Bitmap): OcrResult {
-        if (bitmap.isRecycled) return OcrResult("", emptyList())
+        require(!bitmap.isRecycled) { "Bitmap is recycled" }
+        val image = InputImage.fromBitmap(bitmap, 0)
 
         return suspendCancellableCoroutine { continuation ->
-            try {
-                val image = InputImage.fromBitmap(bitmap, 0)
-                val task = recognizer.process(image)
+            val task = recognizer.process(image)
+            task.addOnSuccessListener { visionText ->
+                if (!continuation.isActive) return@addOnSuccessListener
 
-                task.addOnSuccessListener { visionText ->
-                    if (!continuation.isActive) return@addOnSuccessListener
-
-                    val blocks = mutableListOf<TextBlock>()
-                    var lineIndex = 0
-
-                    visionText.textBlocks.forEach { block ->
-                        block.lines.forEach { line ->
-                            line.elements.forEachIndexed { wordIndex, element ->
-                                val rect = element.boundingBox?.let {
-                                    RectF(
-                                        it.left.toFloat(),
-                                        it.top.toFloat(),
-                                        it.right.toFloat(),
-                                        it.bottom.toFloat()
-                                    )
-                                }
-                                blocks += TextBlock(
-                                    text = element.text,
-                                    boundingBox = rect,
-                                    lineIndex = lineIndex,
-                                    wordIndex = wordIndex
+                val blocks = mutableListOf<TextBlock>()
+                var lineIndex = 0
+                visionText.textBlocks.forEach { block ->
+                    block.lines.forEach { line ->
+                        line.elements.forEachIndexed { wordIndex, element ->
+                            val box = element.boundingBox?.let {
+                                RectF(
+                                    it.left.toFloat(),
+                                    it.top.toFloat(),
+                                    it.right.toFloat(),
+                                    it.bottom.toFloat()
                                 )
                             }
-                            lineIndex++
+                            blocks += TextBlock(
+                                text = element.text,
+                                boundingBox = box,
+                                lineIndex = lineIndex,
+                                wordIndex = wordIndex
+                            )
                         }
+                        lineIndex++
                     }
+                }
 
-                    continuation.resume(
-                        OcrResult(
-                            fullText = visionText.text,
-                            blocks = blocks,
-                            confidence = 0f
-                        )
+                continuation.resume(
+                    OcrResult(
+                        fullText = visionText.text,
+                        blocks = blocks
                     )
-                }
-
-                task.addOnFailureListener { error ->
-                    Log.e(TAG, "OCR failed", error)
-                    if (continuation.isActive) {
-                        continuation.resume(OcrResult("", emptyList()))
-                    }
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "OCR exception", t)
+                )
+            }
+            task.addOnFailureListener { error ->
+                Log.e(TAG, "OCR failed", error)
                 if (continuation.isActive) {
                     continuation.resume(OcrResult("", emptyList()))
                 }
@@ -144,54 +124,85 @@ object OcrEngine {
 
     suspend fun extractTextFromPdf(
         context: Context,
-        pdfPath: String
-    ): List<PageOcrResult> = withContext(Dispatchers.IO) {
+        pdfPath: String,
+        onProgress: (currentPage: Int, totalPages: Int) -> Unit = { _, _ -> }
+    ): List<PageOcrResult> {
+        initialize(context)
         val file = File(pdfPath)
-        if (!file.exists() || !file.isFile) return@withContext emptyList()
+        require(file.isFile) { "PDF does not exist" }
 
-        val results = mutableListOf<PageOcrResult>()
+        val descriptor = ParcelFileDescriptor.open(
+            file,
+            ParcelFileDescriptor.MODE_READ_ONLY
+        )
+        val renderer = try {
+            PdfRenderer(descriptor)
+        } catch (error: Throwable) {
+            descriptor.close()
+            throw error
+        }
 
         try {
-            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    for (index in 0 until renderer.pageCount) {
-                        renderer.openPage(index).use { page ->
-                            val sourcePixels = page.width.toLong() * page.height.toLong()
-                            val scale = if (sourcePixels <= 0L) {
-                                1f
-                            } else {
-                                sqrt(MAX_RENDER_PIXELS.toDouble() / sourcePixels.toDouble())
-                                    .toFloat()
-                                    .coerceAtMost(2f)
-                                    .coerceAtLeast(0.25f)
-                            }
+            val results = ArrayList<PageOcrResult>(renderer.pageCount)
 
-                            val width = max(1, (page.width * scale).toInt())
-                            val height = max(1, (page.height * scale).toInt())
-                            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            for (pageIndex in 0 until renderer.pageCount) {
+                coroutineContext.ensureActive()
+                onProgress(pageIndex + 1, renderer.pageCount)
 
-                            try {
-                                bitmap.eraseColor(Color.WHITE)
-                                page.render(
-                                    bitmap,
-                                    null,
-                                    null,
-                                    PdfRenderer.Page.RENDER_MODE_FOR_PRINT
-                                )
-                                results += PageOcrResult(index, extractText(bitmap))
-                            } finally {
-                                if (!bitmap.isRecycled) bitmap.recycle()
-                            }
-                        }
+                renderer.openPage(pageIndex).use { page ->
+                    val originalPixels = page.width.toLong() * page.height.toLong()
+                    val scale = if (originalPixels > MAX_OCR_PIXELS) {
+                        sqrt(MAX_OCR_PIXELS.toDouble() / originalPixels.toDouble())
+                    } else {
+                        1.0
+                    }
+
+                    val width = (page.width * scale).toInt().coerceAtLeast(1)
+                    val height = (page.height * scale).toInt().coerceAtLeast(1)
+                    val bitmap = Bitmap.createBitmap(
+                        width,
+                        height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    try {
+                        bitmap.eraseColor(Color.WHITE)
+                        page.render(
+                            bitmap,
+                            null,
+                            null,
+                            PdfRenderer.Page.RENDER_MODE_FOR_PRINT
+                        )
+                        results += PageOcrResult(
+                            pageIndex = pageIndex,
+                            result = extractText(bitmap)
+                        )
+                    } finally {
+                        if (!bitmap.isRecycled) bitmap.recycle()
                     }
                 }
             }
-        } catch (t: Throwable) {
-            Log.e(TAG, "PDF OCR failed", t)
-        }
 
-        results
+            return results
+        } finally {
+            renderer.close()
+            descriptor.close()
+        }
     }
+
+    fun encodeForPersistence(pages: List<PageOcrResult>): String =
+        OcrTextCodec.encode(
+            pages.map { page ->
+                OcrTextCodec.PageText(page.pageIndex, page.result.fullText)
+            }
+        )
+
+    fun decodePersisted(value: String?): List<PageOcrResult> =
+        OcrTextCodec.decode(value).map { page ->
+            PageOcrResult(
+                pageIndex = page.pageIndex,
+                result = OcrResult(page.text, emptyList())
+            )
+        }
 
     fun searchKeyword(
         pagesText: List<PageOcrResult>,
@@ -203,31 +214,34 @@ object OcrEngine {
         val matches = mutableListOf<SearchMatch>()
         val needle = if (caseSensitive) keyword else keyword.lowercase()
 
-        pagesText.forEach { pageResult ->
-            val original = pageResult.result.fullText
-            val haystack = if (caseSensitive) original else original.lowercase()
-            var searchFrom = 0
+        pagesText.forEach { page ->
+            val original = page.result.fullText
+            val searchable = if (caseSensitive) original else original.lowercase()
 
-            while (searchFrom <= haystack.length - needle.length) {
-                val matchIndex = haystack.indexOf(needle, searchFrom)
-                if (matchIndex < 0) break
+            var cursor = 0
+            while (cursor <= searchable.length - needle.length) {
+                val index = searchable.indexOf(needle, cursor)
+                if (index < 0) break
 
-                val contextStart = (matchIndex - 50).coerceAtLeast(0)
-                val contextEnd = (matchIndex + keyword.length + 50).coerceAtMost(original.length)
-                val context = original.substring(contextStart, contextEnd)
-                    .replace('\n', ' ')
-                    .trim()
+                val start = (index - 60).coerceAtLeast(0)
+                val end = (index + keyword.length + 80).coerceAtMost(original.length)
+                val line = original.substring(0, index).count { it == '\n' }
 
                 matches += SearchMatch(
-                    pageIndex = pageResult.pageIndex,
-                    lineIndex = original.substring(0, matchIndex).count { it == '\n' },
-                    startOffset = matchIndex,
-                    endOffset = matchIndex + keyword.length,
-                    context = context,
-                    matchedText = original.substring(matchIndex, matchIndex + keyword.length)
+                    pageIndex = page.pageIndex,
+                    lineIndex = line,
+                    startOffset = index,
+                    endOffset = index + keyword.length,
+                    context = original.substring(start, end)
+                        .replace('\n', ' ')
+                        .trim(),
+                    matchedText = original.substring(
+                        index,
+                        (index + keyword.length).coerceAtMost(original.length)
+                    )
                 )
 
-                searchFrom = matchIndex + max(1, needle.length)
+                cursor = index + needle.length.coerceAtLeast(1)
             }
         }
 
@@ -235,18 +249,16 @@ object OcrEngine {
     }
 
     fun getCombinedText(pagesText: List<PageOcrResult>): String =
-        pagesText.joinToString(PAGE_SEPARATOR) { it.result.fullText }
-
-    fun splitCombinedText(combinedText: String?): List<String> =
-        combinedText
-            ?.split(PAGE_SEPARATOR)
-            ?.map { it.trim() }
-            ?: emptyList()
+        OcrTextCodec.combinedHumanReadable(
+            pagesText.map {
+                OcrTextCodec.PageText(it.pageIndex, it.result.fullText)
+            }
+        )
 
     fun countWords(pagesText: List<PageOcrResult>): Int =
-        pagesText.sumOf { page ->
-            page.result.fullText
-                .split(Regex("\\s+"))
-                .count { it.isNotBlank() }
-        }
+        OcrTextCodec.wordCount(
+            pagesText.map {
+                OcrTextCodec.PageText(it.pageIndex, it.result.fullText)
+            }
+        )
 }

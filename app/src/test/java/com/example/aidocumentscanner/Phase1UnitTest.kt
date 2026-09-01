@@ -44,7 +44,7 @@ class Phase1UnitTest {
     }
 
     @Test
-    fun ocrEngine_combinedText_separatorRoundtrip() {
+    fun ocrEngine_combinedTextSeparation() {
         val page0 = OcrEngine.PageOcrResult(
             pageIndex = 0,
             result = OcrEngine.OcrResult(fullText = "Page 1 Content", blocks = emptyList())
@@ -54,12 +54,12 @@ class Phase1UnitTest {
             result = OcrEngine.OcrResult(fullText = "Page 2 Content", blocks = emptyList())
         )
 
-        val combined = OcrEngine.getCombinedText(listOf(page0, page1))
-        val split = OcrEngine.splitCombinedText(combined)
+        val encoded = OcrEngine.encodeForPersistence(listOf(page0, page1))
+        val decoded = OcrEngine.decodePersisted(encoded)
 
-        assertEquals(2, split.size)
-        assertEquals("Page 1 Content", split[0])
-        assertEquals("Page 2 Content", split[1])
+        assertEquals(2, decoded.size)
+        assertEquals("Page 1 Content", decoded[0].result.fullText)
+        assertEquals("Page 2 Content", decoded[1].result.fullText)
     }
 
     @Test

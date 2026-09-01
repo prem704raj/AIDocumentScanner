@@ -20,6 +20,7 @@ import com.example.aidocumentscanner.ui.screens.DocumentsScreen
 import com.example.aidocumentscanner.ui.screens.EditorScreen
 import com.example.aidocumentscanner.ui.screens.ExternalPdfViewerScreen
 import com.example.aidocumentscanner.ui.screens.HomeScreen
+import com.example.aidocumentscanner.ui.screens.OcrTextScreen
 import com.example.aidocumentscanner.ui.screens.PdfOptimizerScreen
 import com.example.aidocumentscanner.ui.screens.PdfPreviewScreen
 import com.example.aidocumentscanner.ui.screens.PdfToolsScreen
@@ -43,6 +44,10 @@ sealed class Screen(val route: String) {
 
     data object PdfTools : Screen("pdf_tools")
     data object Search : Screen("search")
+
+    data object OcrText : Screen("ocr_text/{documentId}") {
+        fun createRoute(documentId: Long): String = "ocr_text/$documentId"
+    }
 
     data object PdfOptimizer : Screen("pdf_optimizer?documentId={documentId}") {
         fun createRoute(documentId: Long? = null): String =
@@ -105,6 +110,9 @@ fun AppNavigation(
                 },
                 onDevicePdfsClick = {
                     navController.navigate(Screen.DevicePdfs.route)
+                },
+                onSearchClick = {
+                    navController.navigate(Screen.Search.route)
                 }
             )
         }
@@ -225,7 +233,10 @@ fun AppNavigation(
             PdfViewerScreen(
                 documentId = documentId,
                 initialPage = page,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onOcrClick = { docId ->
+                    navController.navigate(Screen.OcrText.createRoute(docId))
+                }
             )
         }
 
@@ -260,6 +271,24 @@ fun AppNavigation(
                             documentId,
                             pageIndex
                         )
+                    )
+                }
+            )
+        }
+
+        composable(
+            route = Screen.OcrText.route,
+            arguments = listOf(
+                navArgument("documentId") { type = NavType.LongType }
+            )
+        ) { entry ->
+            val documentId = entry.arguments?.getLong("documentId") ?: 0L
+            OcrTextScreen(
+                documentId = documentId,
+                onBack = { navController.popBackStack() },
+                onOpenPage = { pageIndex ->
+                    navController.navigate(
+                        Screen.PdfViewer.createRoute(documentId, pageIndex)
                     )
                 }
             )

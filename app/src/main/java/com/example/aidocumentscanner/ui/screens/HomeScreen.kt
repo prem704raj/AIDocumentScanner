@@ -7,14 +7,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Card
@@ -90,7 +91,8 @@ fun HomeScreen(
     onDocumentClick: (Long) -> Unit,
     onImagesSelected: (List<Bitmap>) -> Unit,
     onOptimizeClick: () -> Unit = {},
-    onDevicePdfsClick: () -> Unit = {}
+    onDevicePdfsClick: () -> Unit = {},
+    onSearchClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DocumentRepository(context) }
@@ -164,6 +166,9 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onSearchClick) {
+                        Icon(Icons.Default.Search, contentDescription = "Search documents")
+                    }
                     IconButton(onClick = onDevicePdfsClick) {
                         Icon(Icons.Default.PictureAsPdf, contentDescription = "Open PDFs")
                     }
