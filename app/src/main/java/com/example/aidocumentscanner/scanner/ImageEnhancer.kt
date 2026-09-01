@@ -5,15 +5,13 @@ import android.graphics.Matrix
 import android.util.Log
 import com.example.aidocumentscanner.util.BitmapCache
 import org.opencv.android.Utils
-import org.opencv.core.*
+import org.opencv.core.Core
+import org.opencv.core.CvType
+import org.opencv.core.Mat
+import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 
-/**
- * Image enhancement filters for scanned documents.
- * All processing is done locally - no internet required.
- */
 object ImageEnhancer {
-
     private const val TAG = "ImageEnhancer"
 
     enum class FilterType {
@@ -31,399 +29,199 @@ object ImageEnhancer {
         COOL
     }
 
-    /**
-     * Apply enhancement filter to bitmap with crash protection
-     */
     fun applyFilter(bitmap: Bitmap, filter: FilterType): Bitmap {
-        val cacheKey = "${bitmap.hashCode()}_${filter.name}"
-        BitmapCache.get(cacheKey)?.let { return it.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true) }
-        
-        val result = try {
+        require(!bitmap.isRecycled) { "Cannot filter a recycled bitmap" }
+        val cacheKey = "${System.identityHashCode(bitmap)}:${bitmap.width}x${bitmap.height}:${filter.name}"
+        BitmapCache.get(cacheKey)?.let { return it }
+
+        val result = runCatching {
             when (filter) {
-                FilterType.ORIGINAL -> bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+                FilterType.ORIGINAL -> bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
                 FilterType.MAGIC_COLOR -> applyMagicColor(bitmap)
                 FilterType.GRAYSCALE -> applyGrayscale(bitmap)
                 FilterType.BLACK_WHITE -> applyBlackWhite(bitmap)
-                FilterType.LIGHTEN -> adjustBrightness(bitmap, 40)
-                FilterType.DARKEN -> adjustBrightness(bitmap, -40)
+                FilterType.LIGHTEN -> adjustBrightness(bitmap, 36)
+                FilterType.DARKEN -> adjustBrightness(bitmap, -36)
                 FilterType.SEPIA -> applySepia(bitmap)
-                FilterType.HIGH_CONTRAST -> applyHighContrast(bitmap)
+                FilterType.HIGH_CONTRAST -> adjustContrast(bitmap, 1.45f, -35.0)
                 FilterType.SHARPEN -> applySharpen(bitmap)
-                FilterType.INVERT -> applyInvert(bitmap)
-                FilterType.WARM -> applyWarm(bitmap)
-                FilterType.COOL -> applyCool(bitmap)
+                FilterType.INVERT -> transformSingleMat(bitmap) { mat -> Core.bitwise_not(mat, mat) }
+                FilterType.WARM -> tint(bitmap, redOffset = 24.0, blueOffset = -20.0)
+                FilterType.COOL -> tint(bitmap, redOffset = -20.0, blueOffset = 24.0)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error applying filter: ${e.message}", e)
-            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+        }.getOrElse { error ->
+            Log.e(TAG, "Filter ${filter.name} failed", error)
+            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
         }
-        
+
         BitmapCache.put(cacheKey, result)
         return result
     }
-    
-    /**
-     * Magic color filter - auto contrast and color enhancement
-     */
+
     private fun applyMagicColor(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+        val source = Mat()
+        val rgb = Mat()
+        val lab = Mat()
+        val channels = ArrayList<Mat>()
+        val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
         try {
-            // Convert to Lab color space
-            val lab = Mat()
-            Imgproc.cvtColor(mat, lab, Imgproc.COLOR_RGBA2RGB)
-            Imgproc.cvtColor(lab, lab, Imgproc.COLOR_RGB2Lab)
-            
-            // Split channels
-            val channels = ArrayList<Mat>()
+            Utils.bitmapToMat(bitmap, source)
+            Imgproc.cvtColor(source, rgb, Imgproc.COLOR_RGBA2RGB)
+            Imgproc.cvtColor(rgb, lab, Imgproc.COLOR_RGB2Lab)
             Core.split(lab, channels)
-            
-            // Apply CLAHE to L channel
-            val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
             clahe.apply(channels[0], channels[0])
-            
-            // Merge channels
             Core.merge(channels, lab)
-            
-            // Convert back to RGB
-            Imgproc.cvtColor(lab, mat, Imgproc.COLOR_Lab2RGB)
-            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2RGBA)
-            
-            // Increase saturation slightly
-            val hsv = Mat()
-            Imgproc.cvtColor(mat, hsv, Imgproc.COLOR_RGBA2RGB)
-            Imgproc.cvtColor(hsv, hsv, Imgproc.COLOR_RGB2HSV)
-            
-            val hsvChannels = ArrayList<Mat>()
-            Core.split(hsv, hsvChannels)
-            hsvChannels[1].convertTo(hsvChannels[1], -1, 1.2, 0.0)
-            Core.merge(hsvChannels, hsv)
-            
-            Imgproc.cvtColor(hsv, mat, Imgproc.COLOR_HSV2RGB)
-            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2RGBA)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            // Clean up
-            mat.release()
+            Imgproc.cvtColor(lab, rgb, Imgproc.COLOR_Lab2RGB)
+            Imgproc.cvtColor(rgb, source, Imgproc.COLOR_RGB2RGBA)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
+            rgb.release()
             lab.release()
-            hsv.release()
             channels.forEach { it.release() }
-            hsvChannels.forEach { it.release() }
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
+            clahe.clear()
         }
     }
-    
-    /**
-     * Convert to grayscale
-     */
+
     private fun applyGrayscale(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+        val source = Mat()
+        val gray = Mat()
         try {
-            val gray = Mat()
-            Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
-            Imgproc.cvtColor(gray, mat, Imgproc.COLOR_GRAY2RGBA)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
+            Utils.bitmapToMat(bitmap, source)
+            Imgproc.cvtColor(source, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.cvtColor(gray, source, Imgproc.COLOR_GRAY2RGBA)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
             gray.release()
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
         }
     }
-    
-    /**
-     * Black and white with adaptive thresholding
-     */
+
     private fun applyBlackWhite(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+        val source = Mat()
+        val gray = Mat()
+        val threshold = Mat()
         try {
-            val gray = Mat()
-            Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
+            Utils.bitmapToMat(bitmap, source)
+            Imgproc.cvtColor(source, gray, Imgproc.COLOR_RGBA2GRAY)
             Imgproc.GaussianBlur(gray, gray, Size(3.0, 3.0), 0.0)
-            
-            val thresh = Mat()
             Imgproc.adaptiveThreshold(
-                gray, thresh, 255.0,
+                gray,
+                threshold,
+                255.0,
                 Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-                Imgproc.THRESH_BINARY, 11, 2.0
+                Imgproc.THRESH_BINARY,
+                21,
+                10.0
             )
-            
-            Imgproc.cvtColor(thresh, mat, Imgproc.COLOR_GRAY2RGBA)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
+            Imgproc.cvtColor(threshold, source, Imgproc.COLOR_GRAY2RGBA)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
             gray.release()
-            thresh.release()
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
+            threshold.release()
         }
     }
-    
-    /**
-     * Sepia tone filter
-     */
+
     private fun applySepia(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+        val source = Mat()
+        val rgb = Mat()
+        val kernel = Mat(3, 3, CvType.CV_32F)
         try {
-            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGBA2RGB)
-            
-            val sepiaKernel = Mat(3, 3, CvType.CV_32F)
-            sepiaKernel.put(0, 0, 
+            Utils.bitmapToMat(bitmap, source)
+            Imgproc.cvtColor(source, rgb, Imgproc.COLOR_RGBA2RGB)
+            kernel.put(
+                0,
+                0,
                 0.272, 0.534, 0.131,
                 0.349, 0.686, 0.168,
                 0.393, 0.769, 0.189
             )
-            
-            Core.transform(mat, mat, sepiaKernel)
-            Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2RGBA)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            sepiaKernel.release()
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
+            Core.transform(rgb, rgb, kernel)
+            Imgproc.cvtColor(rgb, source, Imgproc.COLOR_RGB2RGBA)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
+            rgb.release()
+            kernel.release()
         }
     }
-    
-    /**
-     * High contrast filter
-     */
-    private fun applyHighContrast(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
-        try {
-            mat.convertTo(mat, -1, 1.5, -50.0) // alpha=1.5 for contrast, beta=-50 for brightness
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
-        }
-    }
-    
-    /**
-     * Sharpen filter for text clarity
-     */
+
     private fun applySharpen(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+        val source = Mat()
+        val kernel = Mat(3, 3, CvType.CV_32F)
         try {
-            val kernel = Mat(3, 3, CvType.CV_32F)
-            kernel.put(0, 0,
+            Utils.bitmapToMat(bitmap, source)
+            kernel.put(
+                0,
+                0,
                 0.0, -1.0, 0.0,
                 -1.0, 5.0, -1.0,
                 0.0, -1.0, 0.0
             )
-            
-            Imgproc.filter2D(mat, mat, -1, kernel)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
+            Imgproc.filter2D(source, source, -1, kernel)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
             kernel.release()
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
         }
     }
-    
-    /**
-     * Invert colors
-     */
-    private fun applyInvert(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+
+    fun adjustBrightness(bitmap: Bitmap, brightness: Int): Bitmap =
+        transformSingleMat(bitmap) { it.convertTo(it, -1, 1.0, brightness.toDouble()) }
+
+    fun adjustContrast(bitmap: Bitmap, contrast: Float): Bitmap =
+        adjustContrast(bitmap, contrast.coerceIn(0.2f, 3f), 0.0)
+
+    private fun adjustContrast(bitmap: Bitmap, contrast: Float, offset: Double): Bitmap =
+        transformSingleMat(bitmap) { it.convertTo(it, -1, contrast.toDouble(), offset) }
+
+    private fun tint(bitmap: Bitmap, redOffset: Double, blueOffset: Double): Bitmap {
+        val source = Mat()
+        val channels = ArrayList<Mat>()
         try {
-            Core.bitwise_not(mat, mat)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
-        }
-    }
-    
-    /**
-     * Warm color temperature
-     */
-    private fun applyWarm(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
-        try {
-            val channels = ArrayList<Mat>()
-            Core.split(mat, channels)
-            
-            // Increase red, decrease blue
-            channels[0].convertTo(channels[0], -1, 1.0, 30.0) // R
-            channels[2].convertTo(channels[2], -1, 1.0, -30.0) // B
-            
-            Core.merge(channels, mat)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
+            Utils.bitmapToMat(bitmap, source)
+            Core.split(source, channels)
+            // OpenCV RGBA channel order after Utils.bitmapToMat is R, G, B, A.
+            channels.getOrNull(0)?.convertTo(channels[0], -1, 1.0, redOffset)
+            channels.getOrNull(2)?.convertTo(channels[2], -1, 1.0, blueOffset)
+            Core.merge(channels, source)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
             channels.forEach { it.release() }
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
         }
     }
-    
-    /**
-     * Cool color temperature
-     */
-    private fun applyCool(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
-        
+
+    private inline fun transformSingleMat(bitmap: Bitmap, transform: (Mat) -> Unit): Bitmap {
+        val source = Mat()
         try {
-            val channels = ArrayList<Mat>()
-            Core.split(mat, channels)
-            
-            // Decrease red, increase blue
-            channels[0].convertTo(channels[0], -1, 1.0, -30.0) // R
-            channels[2].convertTo(channels[2], -1, 1.0, 30.0) // B
-            
-            Core.merge(channels, mat)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            channels.forEach { it.release() }
-            
-            return result
-        } catch (e: Exception) {
-            mat.release()
-            throw e
+            Utils.bitmapToMat(bitmap, source)
+            transform(source)
+            return bitmapFromMat(source)
+        } finally {
+            source.release()
         }
     }
-    
-    /**
-     * Adjust brightness
-     */
-    fun adjustBrightness(bitmap: Bitmap, brightness: Int): Bitmap {
-        return try {
-            val mat = Mat()
-            Utils.bitmapToMat(bitmap, mat)
-            
-            mat.convertTo(mat, -1, 1.0, brightness.toDouble())
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "Error adjusting brightness: ${e.message}", e)
-            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+
+    private fun bitmapFromMat(mat: Mat): Bitmap =
+        Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888).also {
+            Utils.matToBitmap(mat, it)
         }
-    }
-    
-    /**
-     * Adjust contrast
-     */
-    fun adjustContrast(bitmap: Bitmap, contrast: Float): Bitmap {
-        return try {
-            val mat = Mat()
-            Utils.bitmapToMat(bitmap, mat)
-            
-            mat.convertTo(mat, -1, contrast.toDouble(), 0.0)
-            
-            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(mat, result)
-            
-            mat.release()
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "Error adjusting contrast: ${e.message}", e)
-            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
-        }
-    }
-    
-    /**
-     * Rotate image by degrees - FIXED VERSION
-     */
+
     fun rotate(bitmap: Bitmap, degrees: Float): Bitmap {
-        return try {
-            // Use Android's Matrix for reliable rotation
-            val matrix = Matrix()
-            matrix.postRotate(degrees)
-            
-            Bitmap.createBitmap(
-                bitmap,
-                0, 0,
-                bitmap.width, bitmap.height,
-                matrix,
-                true
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error rotating: ${e.message}", e)
-            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
-        }
+        require(!bitmap.isRecycled)
+        if (degrees % 360f == 0f) return bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
-    
-    /**
-     * Crop bitmap to specified rectangle
-     */
+
     fun crop(bitmap: Bitmap, left: Int, top: Int, width: Int, height: Int): Bitmap {
-        return try {
-            val safeLeft = left.coerceIn(0, bitmap.width - 1)
-            val safeTop = top.coerceIn(0, bitmap.height - 1)
-            val safeWidth = width.coerceIn(1, bitmap.width - safeLeft)
-            val safeHeight = height.coerceIn(1, bitmap.height - safeTop)
-            
-            Bitmap.createBitmap(bitmap, safeLeft, safeTop, safeWidth, safeHeight)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error cropping: ${e.message}", e)
-            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
-        }
+        require(!bitmap.isRecycled)
+        val safeLeft = left.coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
+        val safeTop = top.coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
+        val safeWidth = width.coerceIn(1, bitmap.width - safeLeft)
+        val safeHeight = height.coerceIn(1, bitmap.height - safeTop)
+        return Bitmap.createBitmap(bitmap, safeLeft, safeTop, safeWidth, safeHeight)
     }
 }
-

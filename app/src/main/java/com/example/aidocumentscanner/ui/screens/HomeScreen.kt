@@ -1,26 +1,63 @@
 package com.example.aidocumentscanner.ui.screens
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.EaseInOutCubic
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,21 +65,20 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
-import com.example.aidocumentscanner.ui.components.DocumentCard
 import com.example.aidocumentscanner.ui.theme.GradientEnd
 import com.example.aidocumentscanner.ui.theme.GradientMiddle
 import com.example.aidocumentscanner.ui.theme.GradientStart
+import com.example.aidocumentscanner.util.BitmapLoader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.InputStream
-import java.text.SimpleDateFormat
-import java.util.*
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,8 +97,7 @@ fun HomeScreen(
     val recentDocuments by repository.getRecentDocuments(5).collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(false) }
-    
-    // Animated scan button
+
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -73,31 +108,27 @@ fun HomeScreen(
         ),
         label = "pulseScale"
     )
-    
-    // Gallery picker launcher for Import button
+
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) {
-            isLoading = true
-            scope.launch {
-                val bitmaps = uris.mapNotNull { uri ->
-                    try {
-                        val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                        inputStream?.use { BitmapFactory.decodeStream(it) }
-                    } catch (e: Exception) {
-                        Log.e("HomeScreen", "Failed to load image: ${e.message}")
-                        null
-                    }
-                }
-                isLoading = false
-                if (bitmaps.isNotEmpty()) {
-                    onImagesSelected(bitmaps)
-                }
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+
+        isLoading = true
+        scope.launch {
+            val bitmaps = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri -> BitmapLoader.decode(context, uri) }
+            }
+            isLoading = false
+
+            if (bitmaps.isNotEmpty()) {
+                onImagesSelected(bitmaps)
+            } else {
+                Toast.makeText(context, "Could not read the selected images", Toast.LENGTH_SHORT).show()
             }
         }
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -106,7 +137,6 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // App logo
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -134,9 +164,8 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    // Device PDFs browser icon
                     IconButton(onClick = onDevicePdfsClick) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = "All PDFs")
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = "Open PDFs")
                     }
                     IconButton(onClick = onSettingsClick) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -154,7 +183,6 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                // Hero Section with Scan Button
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -174,7 +202,6 @@ fun HomeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        // Main Scan Button with animation
                         Box(
                             modifier = Modifier
                                 .scale(pulseScale)
@@ -205,18 +232,15 @@ fun HomeScreen(
                                 modifier = Modifier.size(56.dp)
                             )
                         }
-                        
+
                         Spacer(modifier = Modifier.height(24.dp))
-                        
                         Text(
                             text = "Tap to Scan",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
-                        
                         Spacer(modifier = Modifier.height(8.dp))
-                        
                         Text(
                             text = "Capture documents • Convert to PDF\nAll processing done offline",
                             style = MaterialTheme.typography.bodyMedium,
@@ -225,8 +249,7 @@ fun HomeScreen(
                         )
                     }
                 }
-                
-                // Quick Actions Grid - 4 main actions
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -245,7 +268,10 @@ fun HomeScreen(
                         icon = Icons.Default.PhotoLibrary,
                         label = "Import",
                         sublabel = "Gallery",
-                        gradient = listOf(MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary),
+                        gradient = listOf(
+                            MaterialTheme.colorScheme.tertiary,
+                            MaterialTheme.colorScheme.secondary
+                        ),
                         onClick = {
                             importLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -265,13 +291,15 @@ fun HomeScreen(
                         icon = Icons.Default.FolderOpen,
                         label = "My Files",
                         sublabel = "${recentDocuments.size} docs",
-                        gradient = listOf(MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary),
+                        gradient = listOf(
+                            MaterialTheme.colorScheme.secondary,
+                            MaterialTheme.colorScheme.primary
+                        ),
                         onClick = onDocumentsClick,
                         modifier = Modifier.weight(1f)
                     )
                 }
-                
-                // Second row - Optimize only
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -290,10 +318,9 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.weight(1f))
                     Spacer(modifier = Modifier.weight(1f))
                 }
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
-                // Privacy badge
+
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -314,17 +341,16 @@ fun HomeScreen(
                             tint = Color(0xFF10B981),
                             modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.size(8.dp))
                         Text(
-                            "100% Offline • No Data Upload • No Login Required",
+                            "Offline processing • No account required",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
-            
-            // Loading overlay
+
             AnimatedVisibility(
                 visible = isLoading,
                 enter = fadeIn(),
@@ -336,9 +362,7 @@ fun HomeScreen(
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(48.dp),
                             strokeWidth = 4.dp
@@ -358,7 +382,7 @@ fun HomeScreen(
 
 @Composable
 private fun PremiumActionCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     sublabel: String,
     gradient: List<Color>,
@@ -414,23 +438,9 @@ private fun PremiumActionCard(
                     text = sublabel,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    fontSize = MaterialTheme.typography.bodySmall.fontSize * 0.9f
+                    maxLines = 1
                 )
             }
         }
-    }
-}
-
-private fun formatDate(timestamp: Long): String {
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
-    
-    return when {
-        diff < 60 * 1000 -> "Just now"
-        diff < 60 * 60 * 1000 -> "${diff / (60 * 1000)} min ago"
-        diff < 24 * 60 * 60 * 1000 -> "${diff / (60 * 60 * 1000)} hours ago"
-        diff < 7 * 24 * 60 * 60 * 1000 -> "${diff / (24 * 60 * 60 * 1000)} days ago"
-        else -> SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(timestamp))
     }
 }

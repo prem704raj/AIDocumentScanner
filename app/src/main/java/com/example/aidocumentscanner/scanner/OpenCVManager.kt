@@ -7,62 +7,54 @@ import org.opencv.android.LoaderCallbackInterface
 import org.opencv.android.OpenCVLoader
 
 object OpenCVManager {
-    
     private const val TAG = "OpenCVManager"
-    
-    @Volatile
-    private var isInitialized = false
-    
-    @Volatile
-    private var initInProgress = false
-    
-    private var initCallback: ((Boolean) -> Unit)? = null
 
-    fun isReady(): Boolean = isInitialized
+    @Volatile
+    private var initialized = false
 
+    @Volatile
+    private var initializationInProgress = false
+
+    private val pendingCallbacks = mutableListOf<(Boolean) -> Unit>()
+
+    fun isReady(): Boolean = initialized
+
+    @Synchronized
     fun initializeAsync(context: Context, onComplete: (Boolean) -> Unit) {
-        if (isInitialized) {
+        if (initialized) {
             onComplete(true)
             return
         }
-        
-        if (initInProgress) {
-            initCallback = onComplete
+
+        pendingCallbacks += onComplete
+        if (initializationInProgress) return
+        initializationInProgress = true
+
+        // The QuickBird dependency bundles OpenCV native libraries. Prefer local initialization so
+        // the scanner never depends on a separate OpenCV Manager app being installed.
+        val localReady = runCatching { OpenCVLoader.initDebug() }.getOrDefault(false)
+        if (localReady) {
+            finishInitialization(true)
             return
         }
-        
-        initInProgress = true
-        initCallback = onComplete
-        
-        // Use initAsync for production (non-blocking)
-        OpenCVLoader.initAsync("4.5.0", context, object : BaseLoaderCallback(context) {
+
+        val appContext = context.applicationContext
+        OpenCVLoader.initAsync("4.5.0", appContext, object : BaseLoaderCallback(appContext) {
             override fun onManagerConnected(status: Int) {
-                isInitialized = (status == LoaderCallbackInterface.SUCCESS)
-                initInProgress = false
-                
-                if (isInitialized) {
-                    Log.d(TAG, "OpenCV loaded successfully via initAsync")
-                } else {
-                    Log.e(TAG, "OpenCV initialization failed with status: $status")
-                    // Fallback to initDebug for development
-                    fallbackInit()
-                }
-                
-                initCallback?.invoke(isInitialized)
-                initCallback = null
+                val success = status == LoaderCallbackInterface.SUCCESS
+                if (!success) Log.e(TAG, "OpenCV initialization failed with status=$status")
+                finishInitialization(success)
             }
         })
     }
-    
-    private fun fallbackInit() {
-        try {
-            isInitialized = OpenCVLoader.initDebug()
-            if (isInitialized) {
-                Log.d(TAG, "OpenCV loaded successfully via initDebug (fallback)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "OpenCV fallback initDebug failed", e)
-            isInitialized = false
-        }
+
+    @Synchronized
+    private fun finishInitialization(success: Boolean) {
+        initialized = success
+        initializationInProgress = false
+        val callbacks = pendingCallbacks.toList()
+        pendingCallbacks.clear()
+        callbacks.forEach { callback -> runCatching { callback(success) } }
+        Log.d(TAG, "OpenCV initialized=$success")
     }
 }
