@@ -11,12 +11,15 @@ import org.opencv.imgproc.Imgproc
 import kotlin.math.max
 import kotlin.math.sqrt
 
+/**
+ * Safe four-point perspective correction with bounded output allocation.
+ */
 object PerspectiveCorrector {
     private const val MAX_OUTPUT_PIXELS = 16_000_000L
 
     fun correctPerspective(bitmap: Bitmap, corners: List<PointF>): Bitmap {
         require(!bitmap.isRecycled) { "Source bitmap is recycled" }
-        require(corners.size == 4) { "Perspective correction needs exactly four corners" }
+        require(corners.size == 4) { "Four corners are required" }
 
         val safe = corners.map { point ->
             PointF(
@@ -25,59 +28,68 @@ object PerspectiveCorrector {
             )
         }
 
-        val rawWidth = max(distance(safe[0], safe[1]), distance(safe[3], safe[2]))
-            .toInt().coerceAtLeast(2)
-        val rawHeight = max(distance(safe[0], safe[3]), distance(safe[1], safe[2]))
-            .toInt().coerceAtLeast(2)
+        var outputWidth = max(
+            distance(safe[0], safe[1]),
+            distance(safe[3], safe[2])
+        ).toInt().coerceAtLeast(2)
 
-        val outputScale = minOf(
-            1.0,
-            sqrt(MAX_OUTPUT_PIXELS.toDouble() / (rawWidth.toLong() * rawHeight.toLong()).toDouble())
-        )
-        val width = (rawWidth * outputScale).toInt().coerceAtLeast(2)
-        val height = (rawHeight * outputScale).toInt().coerceAtLeast(2)
+        var outputHeight = max(
+            distance(safe[0], safe[3]),
+            distance(safe[1], safe[2])
+        ).toInt().coerceAtLeast(2)
+
+        val pixels = outputWidth.toLong() * outputHeight.toLong()
+        if (pixels > MAX_OUTPUT_PIXELS) {
+            val scale = sqrt(MAX_OUTPUT_PIXELS.toDouble() / pixels.toDouble())
+            outputWidth = (outputWidth * scale).toInt().coerceAtLeast(2)
+            outputHeight = (outputHeight * scale).toInt().coerceAtLeast(2)
+        }
 
         val source = Mat()
         val output = Mat()
-        val sourcePoints = MatOfPoint2f(
+        val src = MatOfPoint2f(
             Point(safe[0].x.toDouble(), safe[0].y.toDouble()),
             Point(safe[1].x.toDouble(), safe[1].y.toDouble()),
             Point(safe[2].x.toDouble(), safe[2].y.toDouble()),
             Point(safe[3].x.toDouble(), safe[3].y.toDouble())
         )
-        val destinationPoints = MatOfPoint2f(
+        val dst = MatOfPoint2f(
             Point(0.0, 0.0),
-            Point(width.toDouble(), 0.0),
-            Point(width.toDouble(), height.toDouble()),
-            Point(0.0, height.toDouble())
+            Point(outputWidth.toDouble(), 0.0),
+            Point(outputWidth.toDouble(), outputHeight.toDouble()),
+            Point(0.0, outputHeight.toDouble())
         )
         var transform: Mat? = null
 
         try {
             Utils.bitmapToMat(bitmap, source)
-            transform = Imgproc.getPerspectiveTransform(sourcePoints, destinationPoints)
+            transform = Imgproc.getPerspectiveTransform(src, dst)
             Imgproc.warpPerspective(
                 source,
                 output,
                 transform,
-                Size(width.toDouble(), height.toDouble()),
-                Imgproc.INTER_LINEAR
+                Size(outputWidth.toDouble(), outputHeight.toDouble()),
+                Imgproc.INTER_CUBIC,
+                org.opencv.core.Core.BORDER_REPLICATE
             )
-            return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
-                Utils.matToBitmap(output, it)
-            }
+
+            return Bitmap.createBitmap(
+                outputWidth,
+                outputHeight,
+                Bitmap.Config.ARGB_8888
+            ).also { Utils.matToBitmap(output, it) }
         } finally {
             source.release()
             output.release()
-            sourcePoints.release()
-            destinationPoints.release()
+            src.release()
+            dst.release()
             transform?.release()
         }
     }
 
-    private fun distance(first: PointF, second: PointF): Float {
-        val dx = second.x - first.x
-        val dy = second.y - first.y
-        return sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+    private fun distance(a: PointF, b: PointF): Float {
+        val dx = b.x - a.x
+        val dy = b.y - a.y
+        return sqrt(dx * dx + dy * dy)
     }
 }

@@ -126,6 +126,13 @@ fun AppNavigation(
                         val page = pages.removeAt(from)
                         pages.add(to, page)
                     }
+                },
+                onDuplicatePage = { index ->
+                    if (index in pages.indices) {
+                        val original = pages[index]
+                        val copy = original.copy(original.config ?: Bitmap.Config.ARGB_8888, true)
+                        pages.add(index + 1, copy)
+                    }
                 }
             )
         }

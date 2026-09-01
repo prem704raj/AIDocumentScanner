@@ -1,19 +1,22 @@
 package com.example.aidocumentscanner.ui.screens
 
 import android.graphics.Bitmap
+import android.graphics.PointF
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,26 +24,21 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoFixHigh
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -49,7 +47,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -58,8 +55,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -69,7 +70,7 @@ import com.example.aidocumentscanner.scanner.PerspectiveCorrector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
+import kotlin.math.hypot
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
@@ -80,54 +81,75 @@ fun EditorScreen(
     onPageUpdated: (Int, Bitmap) -> Unit,
     onContinue: () -> Unit,
     onBack: () -> Unit,
-    onReorderPages: (Int, Int) -> Unit = { _, _ -> }
+    onReorderPages: (Int, Int) -> Unit = { _, _ -> },
+    onDuplicatePage: (Int) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var currentPage by remember { mutableIntStateOf(0) }
     var selectedFilter by remember { mutableStateOf(ImageEnhancer.FilterType.ORIGINAL) }
     var isProcessing by remember { mutableStateOf(false) }
-    var showCrop by remember { mutableStateOf(false) }
+    var showManualCrop by remember { mutableStateOf(false) }
 
-    // Filter baselines are kept separately so switching filters does not repeatedly filter
-    // an already-filtered image. The shared 'pages' list remains the single save source.
-    val filterBases = remember { mutableStateListOf<Bitmap>().apply { addAll(pages) } }
+    val filterBaselines = remember { mutableStateListOf<Bitmap>() }
 
     LaunchedEffect(pages.size) {
-        while (filterBases.size < pages.size) {
-            filterBases.add(pages[filterBases.size])
+        while (filterBaselines.size < pages.size) {
+            filterBaselines.add(pages[filterBaselines.size])
         }
-        while (filterBases.size > pages.size) {
-            filterBases.removeAt(filterBases.lastIndex)
+        while (filterBaselines.size > pages.size) {
+            filterBaselines.removeAt(filterBaselines.lastIndex)
         }
-        if (pages.isEmpty()) currentPage = 0
-        else currentPage = currentPage.coerceIn(0, pages.lastIndex)
+        if (currentPage > pages.lastIndex) {
+            currentPage = pages.lastIndex.coerceAtLeast(0)
+        }
     }
 
-    val visiblePage = pages.getOrNull(currentPage)
-
-    fun replaceCurrent(bitmap: Bitmap, replaceFilterBase: Boolean) {
-        if (currentPage !in pages.indices) return
-        if (replaceFilterBase && currentPage in filterBases.indices) {
-            filterBases[currentPage] = bitmap
+    fun replaceCurrent(
+        newBitmap: Bitmap,
+        updateBaseline: Boolean
+    ) {
+        val index = currentPage
+        if (index !in pages.indices) {
+            if (!newBitmap.isRecycled) newBitmap.recycle()
+            return
         }
-        onPageUpdated(currentPage, bitmap)
-    }
 
-    suspend fun processCurrent(block: suspend () -> Bitmap?) {
-        if (currentPage !in pages.indices) return
-        isProcessing = true
-        try {
-            val result = block()
-            if (result != null) {
-                onPageUpdated(currentPage, result)
+        if (updateBaseline) {
+            while (filterBaselines.size <= index) {
+                filterBaselines.add(pages[index])
             }
-        } catch (t: Throwable) {
-            snackbar.showSnackbar(t.message ?: "Could not edit this page")
-        } finally {
-            isProcessing = false
+            filterBaselines[index] = newBitmap
+            selectedFilter = ImageEnhancer.FilterType.ORIGINAL
+        }
+        onPageUpdated(index, newBitmap)
+    }
+
+    fun processCurrent(
+        updateBaseline: Boolean = true,
+        block: (Bitmap) -> Bitmap
+    ) {
+        val source = pages.getOrNull(currentPage) ?: return
+        scope.launch {
+            isProcessing = true
+            try {
+                val result = withContext(Dispatchers.Default) { block(source) }
+                replaceCurrent(result, updateBaseline)
+            } catch (_: Throwable) {
+                snackbar.showSnackbar("Could not process this page")
+            } finally {
+                isProcessing = false
+            }
         }
     }
+
+    val visibleFilters = listOf(
+        "Original" to ImageEnhancer.FilterType.ORIGINAL,
+        "Document" to ImageEnhancer.FilterType.DOCUMENT,
+        "B&W" to ImageEnhancer.FilterType.BLACK_WHITE,
+        "Grayscale" to ImageEnhancer.FilterType.GRAYSCALE,
+        "Color" to ImageEnhancer.FilterType.COLOR_ENHANCE
+    )
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -135,7 +157,7 @@ fun EditorScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Edit Document", fontWeight = FontWeight.Bold)
+                        Text("Edit scan", fontWeight = FontWeight.Bold)
                         Text(
                             "${pages.size} page${if (pages.size == 1) "" else "s"}",
                             style = MaterialTheme.typography.bodySmall
@@ -144,67 +166,35 @@ fun EditorScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        Icon(Icons.Default.Delete, contentDescription = "Close editor")
                     }
                 },
                 actions = {
-                    if (pages.size > 1 && selectedFilter != ImageEnhancer.FilterType.ORIGINAL) {
-                        IconButton(
-                            enabled = !isProcessing,
-                            onClick = {
-                                scope.launch {
-                                    isProcessing = true
-                                    try {
-                                        pages.indices.forEach { index ->
-                                            val base = filterBases.getOrNull(index) ?: pages[index]
-                                            val output = withContext(Dispatchers.Default) {
-                                                ImageEnhancer.applyFilter(base, selectedFilter)
-                                            }
-                                            onPageUpdated(index, output)
-                                        }
-                                        snackbar.showSnackbar("Filter applied to all pages")
-                                    } catch (t: Throwable) {
-                                        snackbar.showSnackbar("Could not apply filter to all pages")
-                                    } finally {
-                                        isProcessing = false
-                                    }
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.DoneAll, contentDescription = "Apply filter to all")
-                        }
-                    }
-
                     TextButton(
                         enabled = pages.isNotEmpty() && !isProcessing,
                         onClick = onContinue
                     ) {
                         Text("Continue")
-                        Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Default.ArrowForward, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                     }
                 }
             )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (pages.size > 1) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    itemsIndexed(pages, key = { index, _ -> index }) { index, bitmap ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Page ${index + 1}",
+        },
+        bottomBar = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                if (pages.size > 1) {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(pages) { index, page ->
+                            Box(
                                 modifier = Modifier
-                                    .size(width = 72.dp, height = 96.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .size(width = 58.dp, height = 76.dp)
                                     .border(
                                         width = if (index == currentPage) 2.dp else 1.dp,
                                         color = if (index == currentPage) {
@@ -214,341 +204,348 @@ fun EditorScreen(
                                         },
                                         shape = RoundedCornerShape(8.dp)
                                     )
-                                    .clickable { currentPage = index },
-                                contentScale = ContentScale.Crop
-                            )
-
-                            Row {
-                                IconButton(
-                                    enabled = index > 0,
-                                    onClick = {
-                                        if (index > 0) {
-                                            val base = filterBases.removeAt(index)
-                                            filterBases.add(index - 1, base)
-                                            onReorderPages(index, index - 1)
-                                            currentPage = index - 1
-                                        }
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Default.ChevronLeft, contentDescription = "Move left")
-                                }
-                                IconButton(
-                                    enabled = index < pages.lastIndex,
-                                    onClick = {
-                                        if (index < pages.lastIndex) {
-                                            val base = filterBases.removeAt(index)
-                                            filterBases.add(index + 1, base)
-                                            onReorderPages(index, index + 1)
-                                            currentPage = index + 1
-                                        }
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Default.ChevronRight, contentDescription = "Move right")
-                                }
-                                IconButton(
-                                    enabled = pages.size > 1,
-                                    onClick = {
-                                        if (pages.size > 1) {
-                                            if (index in filterBases.indices) filterBases.removeAt(index)
-                                            onRemovePage(index)
-                                            currentPage = currentPage.coerceAtMost((pages.size - 2).coerceAtLeast(0))
-                                        }
-                                    },
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete page")
-                                }
+                                    .clickable {
+                                        currentPage = index
+                                        selectedFilter = ImageEnhancer.FilterType.ORIGINAL
+                                    }
+                            ) {
+                                Image(
+                                    page.asImageBitmap(),
+                                    contentDescription = "Page ${index + 1}",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Text(
+                                    "${index + 1}",
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .padding(horizontal = 4.dp),
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     }
                 }
-            }
 
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerLowest),
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    isProcessing -> CircularProgressIndicator()
-                    visiblePage != null -> Image(
-                        bitmap = visiblePage.asImageBitmap(),
-                        contentDescription = "Current document page",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(12.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                    else -> Text("No page selected")
-                }
-            }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    visibleFilters.forEach { (label, filter) ->
+                        item {
+                            FilterChip(
+                                selected = selectedFilter == filter,
+                                onClick = {
+                                    val index = currentPage
+                                    val baseline = filterBaselines.getOrNull(index)
+                                        ?: pages.getOrNull(index)
+                                        ?: return@FilterChip
 
-            Text(
-                "Filters",
-                modifier = Modifier.padding(start = 16.dp, top = 8.dp),
-                fontWeight = FontWeight.SemiBold
-            )
-
-            val filters = listOf(
-                "Original" to ImageEnhancer.FilterType.ORIGINAL,
-                "Magic" to ImageEnhancer.FilterType.MAGIC_COLOR,
-                "B&W" to ImageEnhancer.FilterType.BLACK_WHITE,
-                "Gray" to ImageEnhancer.FilterType.GRAYSCALE,
-                "Sharpen" to ImageEnhancer.FilterType.SHARPEN,
-                "Contrast" to ImageEnhancer.FilterType.HIGH_CONTRAST
-            )
-
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                filters.forEach { (label, filter) ->
-                    item {
-                        FilterChip(
-                            selected = selectedFilter == filter,
-                            onClick = {
-                                selectedFilter = filter
-                                val index = currentPage
-                                if (index in pages.indices) {
+                                    selectedFilter = filter
                                     scope.launch {
                                         isProcessing = true
                                         try {
-                                            val base = filterBases.getOrNull(index) ?: pages[index]
-                                            val output = withContext(Dispatchers.Default) {
-                                                if (filter == ImageEnhancer.FilterType.ORIGINAL) {
-                                                    base.copy(base.config ?: Bitmap.Config.ARGB_8888, true)
-                                                } else {
-                                                    ImageEnhancer.applyFilter(base, filter)
-                                                }
+                                            val result = withContext(Dispatchers.Default) {
+                                                ImageEnhancer.applyFilter(baseline, filter)
                                             }
-                                            onPageUpdated(index, output)
-                                        } catch (t: Throwable) {
-                                            snackbar.showSnackbar("Could not apply filter")
+                                            onPageUpdated(index, result)
+                                        } catch (_: Throwable) {
+                                            snackbar.showSnackbar("Filter failed")
                                         } finally {
                                             isProcessing = false
                                         }
                                     }
+                                },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    EditorAction(Icons.Default.RotateLeft, "Left") {
+                        processCurrent { ImageEnhancer.rotate(it, -90f) }
+                    }
+                    EditorAction(Icons.Default.RotateRight, "Right") {
+                        processCurrent { ImageEnhancer.rotate(it, 90f) }
+                    }
+                    EditorAction(Icons.Default.Crop, "Corners") {
+                        showManualCrop = true
+                    }
+                    EditorAction(Icons.Default.AutoFixHigh, "Auto crop") {
+                        val source = pages.getOrNull(currentPage) ?: return@EditorAction
+                        scope.launch {
+                            isProcessing = true
+                            try {
+                                val result = withContext(Dispatchers.Default) {
+                                    DocumentScanner.autoCrop(source, 0.45f)
                                 }
-                            },
-                            label = { Text(label) }
-                        )
+                                if (result.wasCropped) {
+                                    replaceCurrent(result.bitmap, true)
+                                } else {
+                                    if (!result.bitmap.isRecycled) result.bitmap.recycle()
+                                    snackbar.showSnackbar(
+                                        "Edges were uncertain. Adjust the four corners manually."
+                                    )
+                                }
+                            } finally {
+                                isProcessing = false
+                            }
+                        }
+                    }
+                    EditorAction(Icons.Default.ContentCopy, "Duplicate") {
+                        onDuplicatePage(currentPage)
+                    }
+                    EditorAction(Icons.Default.Delete, "Delete") {
+                        if (pages.size <= 1) {
+                            scope.launch { snackbar.showSnackbar("A document needs one page") }
+                        } else {
+                            onRemovePage(currentPage)
+                            filterBaselines.removeAt(
+                                currentPage.coerceAtMost(filterBaselines.lastIndex)
+                            )
+                            currentPage = currentPage.coerceAtMost(pages.size - 2)
+                        }
+                    }
+                    EditorAction(Icons.Default.Add, "Add") {
+                        onAddMorePages()
                     }
                 }
             }
+        }
+    ) { padding ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+            contentAlignment = Alignment.Center
+        ) {
+            pages.getOrNull(currentPage)?.let { page ->
+                Image(
+                    page.asImageBitmap(),
+                    contentDescription = "Current document page",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                EditorAction("Left", Icons.Default.RotateLeft) {
-                    val index = currentPage
-                    if (index in pages.indices) {
-                        scope.launch {
-                            isProcessing = true
-                            try {
-                                val base = filterBases.getOrNull(index) ?: pages[index]
-                                val rotatedBase = withContext(Dispatchers.Default) {
-                                    ImageEnhancer.rotate(base, -90f)
-                                }
-                                filterBases[index] = rotatedBase
-                                val displayed = withContext(Dispatchers.Default) {
-                                    if (selectedFilter == ImageEnhancer.FilterType.ORIGINAL) rotatedBase
-                                    else ImageEnhancer.applyFilter(rotatedBase, selectedFilter)
-                                }
-                                onPageUpdated(index, displayed)
-                            } finally {
-                                isProcessing = false
-                            }
-                        }
-                    }
+            if (isProcessing) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
                 }
-
-                EditorAction("Right", Icons.Default.RotateRight) {
-                    val index = currentPage
-                    if (index in pages.indices) {
-                        scope.launch {
-                            isProcessing = true
-                            try {
-                                val base = filterBases.getOrNull(index) ?: pages[index]
-                                val rotatedBase = withContext(Dispatchers.Default) {
-                                    ImageEnhancer.rotate(base, 90f)
-                                }
-                                filterBases[index] = rotatedBase
-                                val displayed = withContext(Dispatchers.Default) {
-                                    if (selectedFilter == ImageEnhancer.FilterType.ORIGINAL) rotatedBase
-                                    else ImageEnhancer.applyFilter(rotatedBase, selectedFilter)
-                                }
-                                onPageUpdated(index, displayed)
-                            } finally {
-                                isProcessing = false
-                            }
-                        }
-                    }
-                }
-
-                EditorAction("Crop", Icons.Default.Crop) {
-                    if (visiblePage != null) showCrop = true
-                }
-
-                EditorAction("Auto", Icons.Default.AutoFixHigh) {
-                    val index = currentPage
-                    if (index in pages.indices) {
-                        scope.launch {
-                            isProcessing = true
-                            try {
-                                val base = filterBases.getOrNull(index) ?: pages[index]
-                                val cropped = withContext(Dispatchers.Default) {
-                                    val detection = DocumentScanner.detectDocumentEdges(base)
-                                    if (detection.confidence > 0.3f && detection.corners.size == 4) {
-                                        PerspectiveCorrector.correctPerspective(base, detection.corners)
-                                    } else {
-                                        null
-                                    }
-                                }
-
-                                if (cropped == null) {
-                                    snackbar.showSnackbar("No reliable document edges detected")
-                                } else {
-                                    filterBases[index] = cropped
-                                    val displayed = withContext(Dispatchers.Default) {
-                                        if (selectedFilter == ImageEnhancer.FilterType.ORIGINAL) cropped
-                                        else ImageEnhancer.applyFilter(cropped, selectedFilter)
-                                    }
-                                    onPageUpdated(index, displayed)
-                                }
-                            } catch (t: Throwable) {
-                                snackbar.showSnackbar("Automatic crop failed")
-                            } finally {
-                                isProcessing = false
-                            }
-                        }
-                    }
-                }
-
-                EditorAction("Add", Icons.Default.Add, onAddMorePages)
             }
         }
     }
 
-    if (showCrop && visiblePage != null) {
-        NormalizedCropDialog(
-            bitmap = filterBases.getOrNull(currentPage) ?: visiblePage,
-            onDismiss = { showCrop = false },
-            onApply = { left, top, right, bottom ->
-                val index = currentPage
-                showCrop = false
-                if (index in pages.indices) {
+    if (showManualCrop) {
+        pages.getOrNull(currentPage)?.let { bitmap ->
+            FourCornerCropDialog(
+                bitmap = bitmap,
+                onDismiss = { showManualCrop = false },
+                onApply = { points ->
+                    showManualCrop = false
                     scope.launch {
                         isProcessing = true
                         try {
-                            val base = filterBases.getOrNull(index) ?: pages[index]
-                            val x = (left * base.width).roundToInt().coerceIn(0, base.width - 1)
-                            val y = (top * base.height).roundToInt().coerceIn(0, base.height - 1)
-                            val rightPx = (right * base.width).roundToInt().coerceIn(x + 1, base.width)
-                            val bottomPx = (bottom * base.height).roundToInt().coerceIn(y + 1, base.height)
-                            val width = rightPx - x
-                            val height = bottomPx - y
-
-                            val cropped = withContext(Dispatchers.Default) {
-                                ImageEnhancer.crop(base, x, y, width, height)
+                            val corrected = withContext(Dispatchers.Default) {
+                                PerspectiveCorrector.correctPerspective(bitmap, points)
                             }
-                            filterBases[index] = cropped
-                            val displayed = withContext(Dispatchers.Default) {
-                                if (selectedFilter == ImageEnhancer.FilterType.ORIGINAL) cropped
-                                else ImageEnhancer.applyFilter(cropped, selectedFilter)
-                            }
-                            onPageUpdated(index, displayed)
-                        } catch (t: Throwable) {
-                            snackbar.showSnackbar("Crop failed")
+                            replaceCurrent(corrected, true)
+                        } catch (_: Throwable) {
+                            snackbar.showSnackbar("Could not apply corner crop")
                         } finally {
                             isProcessing = false
                         }
                     }
                 }
-            }
-        )
+            )
+        }
     }
 }
 
 @Composable
 private fun EditorAction(
-    label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
     onClick: () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onClick) {
-            Icon(icon, contentDescription = label)
-        }
-        Text(label, style = MaterialTheme.typography.labelSmall)
+    Column(
+        modifier = Modifier
+            .width(54.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = label)
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
 @Composable
-private fun NormalizedCropDialog(
+private fun FourCornerCropDialog(
     bitmap: Bitmap,
     onDismiss: () -> Unit,
-    onApply: (Float, Float, Float, Float) -> Unit
+    onApply: (List<PointF>) -> Unit
 ) {
-    var left by remember(bitmap) { mutableFloatStateOf(0f) }
-    var top by remember(bitmap) { mutableFloatStateOf(0f) }
-    var right by remember(bitmap) { mutableFloatStateOf(1f) }
-    var bottom by remember(bitmap) { mutableFloatStateOf(1f) }
+    var corners by remember(bitmap) {
+        mutableStateOf(
+            listOf(
+                Offset(0.06f, 0.06f),
+                Offset(0.94f, 0.06f),
+                Offset(0.94f, 0.94f),
+                Offset(0.06f, 0.94f)
+            )
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Crop page") },
+        title = { Text("Adjust document corners") },
         text = {
             Column {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Crop preview",
+                Text(
+                    "Drag each handle to the real page corner.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.size(8.dp))
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp),
-                    contentScale = ContentScale.Fit
-                )
-                Text("Left")
-                Slider(
-                    value = left,
-                    onValueChange = { left = it.coerceAtMost(right - 0.05f) },
-                    valueRange = 0f..1f
-                )
-                Text("Top")
-                Slider(
-                    value = top,
-                    onValueChange = { top = it.coerceAtMost(bottom - 0.05f) },
-                    valueRange = 0f..1f
-                )
-                Text("Right")
-                Slider(
-                    value = right,
-                    onValueChange = { right = it.coerceAtLeast(left + 0.05f) },
-                    valueRange = 0f..1f
-                )
-                Text("Bottom")
-                Slider(
-                    value = bottom,
-                    onValueChange = { bottom = it.coerceAtLeast(top + 0.05f) },
-                    valueRange = 0f..1f
-                )
+                        .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                ) {
+                    Image(
+                        bitmap.asImageBitmap(),
+                        contentDescription = "Crop preview",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds
+                    )
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(bitmap) {
+                                var active = -1
+                                detectDragGestures(
+                                    onDragStart = { start ->
+                                        active = corners.indices.minByOrNull { index ->
+                                            val p = Offset(
+                                                corners[index].x * size.width,
+                                                corners[index].y * size.height
+                                            )
+                                            hypot(
+                                                (p.x - start.x).toDouble(),
+                                                (p.y - start.y).toDouble()
+                                            )
+                                        } ?: -1
+                                    },
+                                    onDragEnd = { active = -1 },
+                                    onDragCancel = { active = -1 },
+                                    onDrag = { change, drag ->
+                                        change.consume()
+                                        if (active !in 0..3) return@detectDragGestures
+                                        val current = corners[active]
+                                        val moved = Offset(
+                                            (current.x + drag.x / size.width)
+                                                .coerceIn(0.01f, 0.99f),
+                                            (current.y + drag.y / size.height)
+                                                .coerceIn(0.01f, 0.99f)
+                                        )
+                                        corners = constrainCorner(corners, active, moved)
+                                    }
+                                )
+                            }
+                    ) {
+                        val px = corners.map {
+                            Offset(it.x * size.width, it.y * size.height)
+                        }
+                        val path = Path().apply {
+                            moveTo(px[0].x, px[0].y)
+                            lineTo(px[1].x, px[1].y)
+                            lineTo(px[2].x, px[2].y)
+                            lineTo(px[3].x, px[3].y)
+                            close()
+                        }
+                        drawPath(
+                            path,
+                            color = Color(0xFF3B82F6),
+                            style = Stroke(width = 5f)
+                        )
+                        px.forEach {
+                            drawCircle(
+                                color = Color.White,
+                                radius = 18f,
+                                center = it
+                            )
+                            drawCircle(
+                                color = Color(0xFF3B82F6),
+                                radius = 18f,
+                                center = it,
+                                style = Stroke(width = 5f)
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onApply(left, top, right, bottom) }) {
-                Text("Apply")
-            }
+            TextButton(
+                onClick = {
+                    onApply(
+                        corners.map {
+                            PointF(
+                                it.x * bitmap.width.toFloat(),
+                                it.y * bitmap.height.toFloat()
+                            )
+                        }
+                    )
+                }
+            ) { Text("Apply") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+private fun constrainCorner(
+    corners: List<Offset>,
+    index: Int,
+    proposed: Offset
+): List<Offset> {
+    val margin = 0.035f
+    val p = when (index) {
+        0 -> Offset(
+            proposed.x.coerceAtMost(corners[1].x - margin),
+            proposed.y.coerceAtMost(corners[3].y - margin)
+        )
+        1 -> Offset(
+            proposed.x.coerceAtLeast(corners[0].x + margin),
+            proposed.y.coerceAtMost(corners[2].y - margin)
+        )
+        2 -> Offset(
+            proposed.x.coerceAtLeast(corners[3].x + margin),
+            proposed.y.coerceAtLeast(corners[1].y + margin)
+        )
+        3 -> Offset(
+            proposed.x.coerceAtMost(corners[2].x - margin),
+            proposed.y.coerceAtLeast(corners[0].y + margin)
+        )
+        else -> proposed
+    }
+    return corners.toMutableList().also { it[index] = p }
 }
