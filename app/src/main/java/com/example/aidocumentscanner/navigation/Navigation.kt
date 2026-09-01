@@ -111,12 +111,16 @@ fun AppNavigation(
                 pages = pages,
                 onContinue = {
                     navController.navigate(Screen.PdfPreview.route) {
-                        popUpTo(Screen.Editor.route) { inclusive = true }
+                        popUpTo(Screen.Editor.route) { inclusive = false }
                     }
                 },
                 onBack = { navController.popBackStack() },
                 onAddMorePages = { navController.navigate(Screen.Camera.route) },
-                onRemovePage = onRemovePage
+                onRemovePage = onRemovePage,
+                onReorderPages = { from, to ->
+                    val page = pages.removeAt(from)
+                    pages.add(to, page)
+                }
             )
         }
         
@@ -132,7 +136,11 @@ fun AppNavigation(
                 onAddMore = {
                     navController.navigate(Screen.Camera.route)
                 },
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onReorderPages = { from, to ->
+                    val page = pages.removeAt(from)
+                    pages.add(to, page)
+                }
             )
         }
         

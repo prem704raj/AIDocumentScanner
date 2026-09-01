@@ -3,6 +3,7 @@ package com.example.aidocumentscanner.scanner
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.util.Log
+import com.example.aidocumentscanner.util.BitmapCache
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
@@ -12,9 +13,9 @@ import org.opencv.imgproc.Imgproc
  * All processing is done locally - no internet required.
  */
 object ImageEnhancer {
-    
+
     private const val TAG = "ImageEnhancer"
-    
+
     enum class FilterType {
         ORIGINAL,
         MAGIC_COLOR,
@@ -29,12 +30,15 @@ object ImageEnhancer {
         WARM,
         COOL
     }
-    
+
     /**
      * Apply enhancement filter to bitmap with crash protection
      */
     fun applyFilter(bitmap: Bitmap, filter: FilterType): Bitmap {
-        return try {
+        val cacheKey = "${bitmap.hashCode()}_${filter.name}"
+        BitmapCache.get(cacheKey)?.let { return it.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true) }
+        
+        val result = try {
             when (filter) {
                 FilterType.ORIGINAL -> bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
                 FilterType.MAGIC_COLOR -> applyMagicColor(bitmap)
@@ -51,9 +55,11 @@ object ImageEnhancer {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error applying filter: ${e.message}", e)
-            // Return original bitmap on error
             bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
         }
+        
+        BitmapCache.put(cacheKey, result)
+        return result
     }
     
     /**

@@ -3,7 +3,6 @@ package com.example.aidocumentscanner.ui.screens
 import android.graphics.Bitmap
 import android.graphics.PointF
 import android.util.Log
-import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -27,7 +26,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
@@ -35,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.scanner.DocumentScanner
 import com.example.aidocumentscanner.scanner.ImageEnhancer
 import com.example.aidocumentscanner.scanner.PerspectiveCorrector
+import com.example.aidocumentscanner.util.BitmapCache
+import com.example.aidocumentscanner.util.safeRecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,9 +48,9 @@ fun EditorScreen(
     onAddMorePages: () -> Unit,
     onRemovePage: (Int) -> Unit,
     onContinue: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onReorderPages: (Int, Int) -> Unit = { _, _ -> }
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
     var currentPageIndex by remember { mutableStateOf(0) }
@@ -61,6 +61,7 @@ fun EditorScreen(
     var showCropDialog by remember { mutableStateOf(false) }
     var showApplyAllDialog by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
     
     // Safely get current page
     val currentPage = remember(processedPages, currentPageIndex) {
@@ -83,15 +84,16 @@ fun EditorScreen(
         }
     }
     
-    // Show error toast
+    // Show error snackbar
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            snackbarHostState.showSnackbar(it)
             errorMessage = null
         }
     }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { 
@@ -166,25 +168,47 @@ fun EditorScreen(
                                 isSelected = index == currentPageIndex,
                                 pageNumber = index + 1,
                                 onClick = { currentPageIndex = index },
+                                canMoveLeft = index > 0,
+                                canMoveRight = index < processedPages.size - 1,
+                                onMoveLeft = {
+                                    val newList = processedPages.toMutableList()
+                                    val item = newList.removeAt(index)
+                                    newList.add(index - 1, item)
+                                    processedPages = newList
+                                    onReorderPages(index, index - 1)
+                                    currentPageIndex = if (currentPageIndex == index) index - 1 else currentPageIndex
+                                },
+                                onMoveRight = {
+                                    val newList = processedPages.toMutableList()
+                                    val item = newList.removeAt(index)
+                                    newList.add(index + 1, item)
+                                    processedPages = newList
+                                    onReorderPages(index, index + 1)
+                                    currentPageIndex = if (currentPageIndex == index) index + 1 else currentPageIndex
+                                },
                                 onDelete = {
-                                    if (processedPages.size > 1) {
-                                        try {
-                                            onRemovePage(index)
-                                            processedPages = processedPages.toMutableList().apply {
-                                                removeAt(index)
-                                            }
-                                            originalPages = originalPages.toMutableList().apply {
-                                                if (index < size) removeAt(index)
-                                            }
-                                            if (currentPageIndex >= processedPages.size) {
-                                                currentPageIndex = (processedPages.size - 1).coerceAtLeast(0)
-                                            }
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Error removing page", e)
-                                            errorMessage = "Failed to remove page"
+                                if (processedPages.size > 1) {
+                                    try {
+                                        // Recycle the bitmap before removing
+                                        val removedBitmap = processedPages[index]
+                                        removedBitmap.safeRecycle()
+                                        
+                                        onRemovePage(index)
+                                        processedPages = processedPages.toMutableList().apply {
+                                            removeAt(index)
                                         }
+                                        originalPages = originalPages.toMutableList().apply {
+                                            if (index < size) removeAt(index)
+                                        }
+                                        if (currentPageIndex >= processedPages.size) {
+                                            currentPageIndex = (processedPages.size - 1).coerceAtLeast(0)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error removing page", e)
+                                        errorMessage = "Failed to remove page"
                                     }
                                 }
+                            }
                             )
                         }
                         
@@ -365,9 +389,9 @@ fun EditorScreen(
                                         originalPages = originalPages.toMutableList().apply {
                                             set(currentPageIndex, cropped)
                                         }
-                                        Toast.makeText(context, "Document detected and cropped!", Toast.LENGTH_SHORT).show()
+                                        scope.launch { snackbarHostState.showSnackbar("Document detected and cropped!") }
                                     } else {
-                                        Toast.makeText(context, "No document edges detected. Try manual crop.", Toast.LENGTH_SHORT).show()
+                                        scope.launch { snackbarHostState.showSnackbar("No document edges detected. Try manual crop.") }
                                     }
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Error with AI crop", e)
@@ -520,7 +544,7 @@ fun EditorScreen(
                                     }
                                 }
                                 processedPages = newPages.toMutableList()
-                                Toast.makeText(context, "Applied to all pages!", Toast.LENGTH_SHORT).show()
+                                scope.launch { snackbarHostState.showSnackbar("Applied to all pages!") }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error applying to all", e)
                                 errorMessage = "Failed to apply to all pages"
@@ -713,63 +737,103 @@ private fun PageThumbnail(
     isSelected: Boolean,
     pageNumber: Int,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    canMoveLeft: Boolean = false,
+    canMoveRight: Boolean = false,
+    onMoveLeft: () -> Unit = {},
+    onMoveRight: () -> Unit = {}
 ) {
-    Box(
+    Row(
         modifier = Modifier
-            .size(70.dp, 90.dp)
-            .shadow(if (isSelected) 8.dp else 2.dp, RoundedCornerShape(8.dp))
-            .clip(RoundedCornerShape(8.dp))
-            .border(
-                width = if (isSelected) 3.dp else 0.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(8.dp)
-            )
-            .clickable(onClick = onClick)
+            .height(90.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Page $pageNumber",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-        
-        // Delete button
-        IconButton(
-            onClick = onDelete,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(24.dp)
-                .padding(2.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(18.dp)
+        // Move left button
+        if (canMoveLeft && isSelected) {
+            IconButton(
+                onClick = onMoveLeft,
+                modifier = Modifier.size(28.dp)
             ) {
                 Icon(
-                    Icons.Default.Close,
-                    contentDescription = "Remove page",
-                    tint = Color.White,
-                    modifier = Modifier.padding(2.dp)
+                    Icons.Default.KeyboardArrowLeft,
+                    contentDescription = "Move left",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
         
-        // Page number badge
-        Surface(
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(4.dp),
-            shape = RoundedCornerShape(4.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f)
+                .size(70.dp, 90.dp)
+                .shadow(if (isSelected) 8.dp else 2.dp, RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(8.dp))
+                .border(
+                    width = if (isSelected) 3.dp else 0.dp,
+                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                .clickable(onClick = onClick)
         ) {
-            Text(
-                text = pageNumber.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Page $pageNumber",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
+            
+            // Delete button
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(24.dp)
+                    .padding(2.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove page",
+                        tint = Color.White,
+                        modifier = Modifier.padding(2.dp)
+                    )
+                }
+            }
+            
+            // Page number badge
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(4.dp),
+                shape = RoundedCornerShape(4.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f)
+            ) {
+                Text(
+                    text = pageNumber.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+        }
+        
+        // Move right button
+        if (canMoveRight && isSelected) {
+            IconButton(
+                onClick = onMoveRight,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.KeyboardArrowRight,
+                    contentDescription = "Move right",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

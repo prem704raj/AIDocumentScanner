@@ -52,6 +52,11 @@ fun SearchScreen(
     var selectedDocument by remember { mutableStateOf<Document?>(null) }
     var ocrProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }  // current, total
     
+    // Initialize OCR engine
+    LaunchedEffect(Unit) {
+        OcrEngine.initialize(context)
+    }
+    
     // Cache for OCR results
     var cachedOcrResults by remember { mutableStateOf<Map<Long, List<OcrEngine.PageOcrResult>>>(emptyMap()) }
     

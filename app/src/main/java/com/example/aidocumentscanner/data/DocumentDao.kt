@@ -65,9 +65,9 @@ interface DocumentDao {
     
     // Rename document
     @Query("UPDATE documents SET name = :newName, updatedAt = :timestamp WHERE id = :documentId")
-    suspend fun renameDocument(documentId: Long, newName: String, timestamp: Long = System.currentTimeMillis())
+    suspend fun renameDocument(documentId: Long, newName: String, timestamp: Long)
     
     // Update emoji
     @Query("UPDATE documents SET emoji = :emoji, updatedAt = :timestamp WHERE id = :documentId")
-    suspend fun updateEmoji(documentId: Long, emoji: String?, timestamp: Long = System.currentTimeMillis())
+    suspend fun updateEmoji(documentId: Long, emoji: String?, timestamp: Long)
 }

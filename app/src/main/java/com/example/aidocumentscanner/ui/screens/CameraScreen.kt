@@ -1,5 +1,6 @@
 package com.example.aidocumentscanner.ui.screens
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
@@ -7,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -28,10 +30,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.PermissionStatus
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import java.io.ByteArrayOutputStream
@@ -50,6 +55,9 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     
     val cameraPermissionState = rememberPermissionState(android.Manifest.permission.CAMERA)
+    
+    // Check if permission request was missed or denied
+    var shouldShowSettingsDialog by remember { mutableStateOf(false) }
     
     var flashEnabled by remember { mutableStateOf(false) }
     var isCapturing by remember { mutableStateOf(false) }
@@ -122,6 +130,12 @@ fun CameraScreen(
     }
     
     if (!cameraPermissionState.status.isGranted) {
+        // Determine if permission is permanently denied
+        val isPermanentlyDenied = when (val status = cameraPermissionState.status) {
+            is PermissionStatus.Denied -> !status.shouldShowRationale
+            else -> false
+        }
+        
         // Permission not granted UI
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -140,18 +154,37 @@ fun CameraScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Camera Permission Required",
-                    style = MaterialTheme.typography.titleLarge
+                    text = if (isPermanentlyDenied) "Camera Access Blocked" else "Camera Permission Required",
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Please grant camera permission to scan documents",
+                    text = if (isPermanentlyDenied)
+                        "Camera permission was permanently denied. Please enable it in app settings."
+                    else
+                        "Please grant camera permission to scan documents",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(24.dp))
-                Button(onClick = { cameraPermissionState.launchPermissionRequest() }) {
-                    Text("Grant Permission")
+                
+                if (isPermanentlyDenied) {
+                    Button(onClick = {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                        context.startActivity(intent)
+                    }) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Open Settings")
+                    }
+                } else {
+                    Button(onClick = { cameraPermissionState.launchPermissionRequest() }) {
+                        Text("Grant Permission")
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 TextButton(onClick = onBack) {

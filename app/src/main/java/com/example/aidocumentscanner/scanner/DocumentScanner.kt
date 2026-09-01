@@ -2,6 +2,7 @@ package com.example.aidocumentscanner.scanner
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import android.util.Log
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
@@ -13,20 +14,35 @@ import kotlin.math.sqrt
  * All processing is done locally - no internet required.
  */
 object DocumentScanner {
-    
-    private var isOpenCVInitialized = false
-    
+
+    private const val TAG = "DocumentScanner"
+
     data class ScanResult(
         val corners: List<PointF>,
         val confidence: Float,
         val croppedBitmap: Bitmap? = null
     )
-    
+
     /**
      * Detect document edges in the given bitmap.
      * Returns corners in order: top-left, top-right, bottom-right, bottom-left
      */
     fun detectDocumentEdges(bitmap: Bitmap): ScanResult {
+        if (!OpenCVManager.isReady()) {
+            Log.w(TAG, "OpenCV not initialized, returning full image bounds")
+            val w = bitmap.width.toFloat()
+            val h = bitmap.height.toFloat()
+            return ScanResult(
+                listOf(
+                    PointF(0f, 0f),
+                    PointF(w, 0f),
+                    PointF(w, h),
+                    PointF(0f, h)
+                ),
+                0f
+            )
+        }
+
         val mat = Mat()
         Utils.bitmapToMat(bitmap, mat)
         

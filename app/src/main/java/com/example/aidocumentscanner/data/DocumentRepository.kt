@@ -26,10 +26,10 @@ class DocumentRepository(context: Context) {
     
     // Rename document
     suspend fun renameDocument(documentId: Long, newName: String) = 
-        documentDao.renameDocument(documentId, newName)
+        documentDao.renameDocument(documentId, newName, System.currentTimeMillis())
     
     // Update emoji
     suspend fun updateEmoji(documentId: Long, emoji: String?) = 
-        documentDao.updateEmoji(documentId, emoji)
+        documentDao.updateEmoji(documentId, emoji, System.currentTimeMillis())
 }
 

@@ -5,9 +5,8 @@ import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,7 +37,8 @@ fun PdfPreviewScreen(
     pages: List<Bitmap>,
     onSave: (Long) -> Unit,
     onAddMore: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onReorderPages: (Int, Int) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -52,6 +52,11 @@ fun PdfPreviewScreen(
     var selectedQuality by remember { mutableStateOf(PdfGenerator.QualityType.HIGH) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var estimatedSize by remember { mutableStateOf("") }
+    
+    // Drag reorder state
+    var draggedItemIndex by remember { mutableStateOf(-1) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    var itemPositions by remember { mutableStateOf(mutableMapOf<Int, Float>()) }
     
     // Calculate estimated file size
     LaunchedEffect(pages, selectedQuality) {
@@ -227,20 +232,23 @@ fun PdfPreviewScreen(
                 }
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
                 contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 itemsIndexed(pages) { index, page ->
-                    PagePreviewCard(
+                    ReorderablePageCard(
                         bitmap = page,
                         pageNumber = index + 1,
-                        totalPages = pages.size
+                        totalPages = pages.size,
+                        index = index,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < pages.size - 1,
+                        onMoveUp = { onReorderPages(index, index - 1) },
+                        onMoveDown = { onReorderPages(index, index + 1) }
                     )
                 }
                 
@@ -465,58 +473,117 @@ fun PdfPreviewScreen(
 }
 
 @Composable
-private fun PagePreviewCard(
+private fun ReorderablePageCard(
     bitmap: Bitmap,
     pageNumber: Int,
-    totalPages: Int
+    totalPages: Int,
+    index: Int,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
 ) {
     Card(
         modifier = Modifier
-            .aspectRatio(0.75f)
+            .fillMaxWidth()
             .shadow(8.dp, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
-        Box {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Page $pageNumber",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-            
-            // Gradient overlay at bottom
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+        ) {
+            // Thumbnail
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                    .weight(1f)
+                    .aspectRatio(0.75f)
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Page $pageNumber",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                
+                // Gradient overlay at bottom
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                                )
                             )
                         )
-                    )
-            )
-            
-            // Page number badge
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(12.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
-            ) {
-                Text(
-                    text = "$pageNumber/$totalPages",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                 )
+                
+                // Page number badge
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(12.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        text = "$pageNumber/$totalPages",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+            
+            // Reorder controls
+            Column(
+                modifier = Modifier
+                    .width(48.dp)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = canMoveUp,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        contentDescription = "Move up",
+                        tint = if (canMoveUp) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.outline
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                // Drag handle indicator
+                Icon(
+                    Icons.Default.DragHandle,
+                    contentDescription = "Drag to reorder",
+                    tint = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = canMoveDown,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Move down",
+                        tint = if (canMoveDown) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.outline
+                    )
+                }
             }
         }
     }
