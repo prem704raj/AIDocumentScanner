@@ -1,6 +1,6 @@
 package com.example.aidocumentscanner.navigation
 
-import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -8,58 +8,69 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.example.aidocumentscanner.ui.screens.*
+import com.example.aidocumentscanner.ui.screens.CameraScreen
+import com.example.aidocumentscanner.ui.screens.DevicePdfBrowserScreen
+import com.example.aidocumentscanner.ui.screens.DocumentsScreen
+import com.example.aidocumentscanner.ui.screens.EditorScreen
+import com.example.aidocumentscanner.ui.screens.ExternalPdfViewerScreen
+import com.example.aidocumentscanner.ui.screens.HomeScreen
+import com.example.aidocumentscanner.ui.screens.PdfOptimizerScreen
+import com.example.aidocumentscanner.ui.screens.PdfPreviewScreen
+import com.example.aidocumentscanner.ui.screens.PdfToolsScreen
+import com.example.aidocumentscanner.ui.screens.PdfViewerScreen
+import com.example.aidocumentscanner.ui.screens.SearchScreen
+import com.example.aidocumentscanner.ui.screens.SettingsScreen
 import com.example.aidocumentscanner.ui.theme.ThemeMode
 
 sealed class Screen(val route: String) {
-    object Home : Screen("home")
-    object Camera : Screen("camera")
-    object Editor : Screen("editor/{imageUri}") {
-        fun createRoute(imageUri: String) = "editor/$imageUri"
+    data object Home : Screen("home")
+    data object Camera : Screen("camera")
+    data object Editor : Screen("editor")
+    data object PdfPreview : Screen("pdf_preview")
+    data object Documents : Screen("documents")
+    data object Settings : Screen("settings")
+
+    data object PdfViewer : Screen("pdf_viewer/{documentId}?page={page}") {
+        fun createRoute(documentId: Long, page: Int = 0): String =
+            "pdf_viewer/$documentId?page=${page.coerceAtLeast(0)}"
     }
-    object PdfPreview : Screen("pdf_preview")
-    object Documents : Screen("documents")
-    object Settings : Screen("settings")
-    object PdfViewer : Screen("pdf_viewer/{documentId}") {
-        fun createRoute(documentId: Long) = "pdf_viewer/$documentId"
-    }
-    object PdfTools : Screen("pdf_tools")
-    object Search : Screen("search")
-    object PdfOptimizer : Screen("pdf_optimizer")
-    object DevicePdfs : Screen("device_pdfs")
-    object ExternalPdfViewer : Screen("external_pdf_viewer")
+
+    data object PdfTools : Screen("pdf_tools")
+    data object Search : Screen("search")
+    data object PdfOptimizer : Screen("pdf_optimizer")
+    data object DevicePdfs : Screen("device_pdfs")
+    data object ExternalPdfViewer : Screen("external_pdf_viewer")
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
     navController: NavHostController,
-    pages: MutableList<android.graphics.Bitmap>,
-    onAddPage: (android.graphics.Bitmap) -> Unit,
-    onAddPages: (List<android.graphics.Bitmap>) -> Unit,
+    pages: MutableList<Bitmap>,
+    onAddPage: (Bitmap) -> Unit,
+    onAddPages: (List<Bitmap>) -> Unit,
     onClearPages: () -> Unit,
     onRemovePage: (Int) -> Unit,
+    onReplacePage: (Int, Bitmap) -> Unit,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     externalPdfUri: Uri? = null,
     onExternalPdfHandled: () -> Unit = {}
 ) {
-    // Shared state for PDF URI to view
     var selectedPdfUri by remember { mutableStateOf<Uri?>(null) }
-    
-    // Handle external PDF when app is opened with a PDF file
+
     LaunchedEffect(externalPdfUri) {
         externalPdfUri?.let { uri ->
             selectedPdfUri = uri
             navController.navigate(Screen.ExternalPdfViewer.route)
         }
     }
-    
+
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route
@@ -70,60 +81,55 @@ fun AppNavigation(
                 onDocumentsClick = { navController.navigate(Screen.Documents.route) },
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onPdfToolsClick = { navController.navigate(Screen.PdfTools.route) },
+                onOptimizeClick = { navController.navigate(Screen.PdfOptimizer.route) },
                 onDocumentClick = { documentId ->
                     navController.navigate(Screen.PdfViewer.createRoute(documentId))
                 },
                 onImagesSelected = { bitmaps ->
-                    bitmaps.forEach { onAddPage(it) }
                     if (bitmaps.isNotEmpty()) {
-                        navController.navigate(Screen.Editor.createRoute("imported")) {
-                            popUpTo(Screen.Home.route) { inclusive = false }
-                        }
+                        onAddPages(bitmaps)
+                        navController.navigate(Screen.Editor.route)
                     }
                 },
                 onDevicePdfsClick = { navController.navigate(Screen.DevicePdfs.route) }
             )
         }
-        
+
         composable(Screen.Camera.route) {
             CameraScreen(
                 onImageCaptured = { bitmap ->
                     onAddPage(bitmap)
-                    navController.navigate(Screen.Editor.createRoute("captured")) {
+                    navController.navigate(Screen.Editor.route) {
                         popUpTo(Screen.Camera.route) { inclusive = true }
                     }
                 },
                 onMultipleImagesCaptured = { bitmaps ->
                     onAddPages(bitmaps)
-                    navController.navigate(Screen.Editor.createRoute("captured")) {
+                    navController.navigate(Screen.Editor.route) {
                         popUpTo(Screen.Camera.route) { inclusive = true }
                     }
                 },
                 onBack = { navController.popBackStack() }
             )
         }
-        
-        composable(
-            route = Screen.Editor.route,
-            arguments = listOf(navArgument("imageUri") { type = NavType.StringType })
-        ) {
+
+        composable(Screen.Editor.route) {
             EditorScreen(
                 pages = pages,
-                onContinue = {
-                    navController.navigate(Screen.PdfPreview.route) {
-                        popUpTo(Screen.Editor.route) { inclusive = false }
-                    }
-                },
+                onContinue = { navController.navigate(Screen.PdfPreview.route) },
                 onBack = { navController.popBackStack() },
                 onAddMorePages = { navController.navigate(Screen.Camera.route) },
                 onRemovePage = onRemovePage,
+                onPageUpdated = onReplacePage,
                 onReorderPages = { from, to ->
-                    val page = pages.removeAt(from)
-                    pages.add(to, page)
+                    if (from in pages.indices && to in pages.indices && from != to) {
+                        val page = pages.removeAt(from)
+                        pages.add(to, page)
+                    }
                 }
             )
         }
-        
+
         composable(Screen.PdfPreview.route) {
             PdfPreviewScreen(
                 pages = pages,
@@ -133,17 +139,17 @@ fun AppNavigation(
                         popUpTo(Screen.Home.route) { inclusive = false }
                     }
                 },
-                onAddMore = {
-                    navController.navigate(Screen.Camera.route)
-                },
+                onAddMore = { navController.navigate(Screen.Camera.route) },
                 onBack = { navController.popBackStack() },
                 onReorderPages = { from, to ->
-                    val page = pages.removeAt(from)
-                    pages.add(to, page)
+                    if (from in pages.indices && to in pages.indices && from != to) {
+                        val page = pages.removeAt(from)
+                        pages.add(to, page)
+                    }
                 }
             )
         }
-        
+
         composable(Screen.Documents.route) {
             DocumentsScreen(
                 onDocumentClick = { documentId ->
@@ -152,7 +158,7 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() }
             )
         }
-        
+
         composable(Screen.Settings.route) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
@@ -160,38 +166,49 @@ fun AppNavigation(
                 onThemeModeChange = onThemeModeChange
             )
         }
-        
+
         composable(
             route = Screen.PdfViewer.route,
-            arguments = listOf(navArgument("documentId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val documentId = backStackEntry.arguments?.getLong("documentId") ?: 0L
+            arguments = listOf(
+                navArgument("documentId") { type = NavType.LongType },
+                navArgument("page") {
+                    type = NavType.IntType
+                    defaultValue = 0
+                }
+            )
+        ) { entry ->
+            val documentId = entry.arguments?.getLong("documentId") ?: 0L
+            val page = entry.arguments?.getInt("page") ?: 0
             PdfViewerScreen(
                 documentId = documentId,
+                initialPage = page,
                 onBack = { navController.popBackStack() }
             )
         }
-        
+
         composable(Screen.PdfTools.route) {
             PdfToolsScreen(
                 onBack = { navController.popBackStack() },
                 onMergeComplete = { documentId ->
                     navController.navigate(Screen.PdfViewer.createRoute(documentId))
+                },
+                onOptimizeRequested = {
+                    navController.navigate(Screen.PdfOptimizer.route)
                 }
             )
         }
-        
+
         composable(Screen.Search.route) {
             SearchScreen(
                 onBack = { navController.popBackStack() },
-                onResultClick = { documentId, pageNum ->
-                     // PDFViewer might not support pageNum yet, but we'll navigate to document
-                     // Ideally pass pageNum as param if supported
-                    navController.navigate(Screen.PdfViewer.createRoute(documentId))
+                onResultClick = { documentId, pageIndex ->
+                    navController.navigate(
+                        Screen.PdfViewer.createRoute(documentId, pageIndex)
+                    )
                 }
             )
         }
-        
+
         composable(Screen.PdfOptimizer.route) {
             PdfOptimizerScreen(
                 onBack = { navController.popBackStack() },
@@ -202,7 +219,7 @@ fun AppNavigation(
                 }
             )
         }
-        
+
         composable(Screen.DevicePdfs.route) {
             DevicePdfBrowserScreen(
                 onBack = { navController.popBackStack() },
@@ -212,20 +229,19 @@ fun AppNavigation(
                 }
             )
         }
-        
+
         composable(Screen.ExternalPdfViewer.route) {
-            selectedPdfUri?.let { uri ->
+            val uri = selectedPdfUri
+            if (uri == null) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
                 ExternalPdfViewerScreen(
                     pdfUri = uri,
-                    onBack = { 
+                    onBack = {
                         onExternalPdfHandled()
                         navController.popBackStack()
                     }
                 )
-            } ?: run {
-                LaunchedEffect(Unit) {
-                    navController.popBackStack()
-                }
             }
         }
     }

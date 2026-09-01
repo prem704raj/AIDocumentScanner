@@ -4,58 +4,76 @@ import android.graphics.Bitmap
 import android.util.LruCache
 
 /**
- * Memory-efficient bitmap cache using LruCache
- * Helps prevent OOM crashes by limiting memory usage
+ * Cache-owned bitmaps are never returned directly to callers.
+ * This prevents LruCache eviction from recycling a Bitmap still displayed by Compose.
  */
 object BitmapCache {
-    
-    private const val DEFAULT_MAX_SIZE_MB = 48 // 48MB default max cache size
-    
-    private val cache: LruCache<String, Bitmap> = object : LruCache<String, Bitmap>(getMaxSize()) {
+
+    private const val MAX_CACHE_MB = 48
+
+    private val cache = object : LruCache<String, Bitmap>(calculateMaxSizeKb()) {
         override fun sizeOf(key: String, value: Bitmap): Int {
-            return value.byteCount / 1024 // Size in KB
+            return (value.allocationByteCount / 1024).coerceAtLeast(1)
         }
-        
-        override fun entryRemoved(evicted: Boolean, key: String, oldValue: Bitmap, newValue: Bitmap?) {
+
+        override fun entryRemoved(
+            evicted: Boolean,
+            key: String,
+            oldValue: Bitmap,
+            newValue: Bitmap?
+        ) {
             if (!oldValue.isRecycled) {
                 oldValue.recycle()
             }
         }
     }
-    
-    private fun getMaxSize(): Int {
-        val maxMemory = Runtime.getRuntime().maxMemory() / 1024 // KB
-        return (maxMemory / 8).coerceAtMost((DEFAULT_MAX_SIZE_MB * 1024).toLong()).coerceAtLeast((16 * 1024).toLong()).toInt()
+
+    private fun calculateMaxSizeKb(): Int {
+        val runtimeMaxKb = Runtime.getRuntime().maxMemory() / 1024L
+        val oneEighthKb = runtimeMaxKb / 8L
+        return oneEighthKb
+            .coerceAtMost(MAX_CACHE_MB * 1024L)
+            .coerceAtLeast(8L * 1024L)
+            .toInt()
     }
-    
-    fun get(key: String): Bitmap? = cache.get(key)
-    
-    fun put(key: String, bitmap: Bitmap) {
-        if (!bitmap.isRecycled) {
-            cache.put(key, bitmap)
+
+    /** Returns a caller-owned copy. */
+    fun get(key: String): Bitmap? {
+        val cached = cache.get(key) ?: return null
+        if (cached.isRecycled) {
+            cache.remove(key)
+            return null
         }
+        return cached.copy(cached.config ?: Bitmap.Config.ARGB_8888, true)
     }
-    
-    fun remove(key: String): Bitmap? = cache.remove(key)
-    
-    fun clear() {
-        cache.evictAll()
+
+    /** Stores a cache-owned copy; the caller keeps ownership of its original bitmap. */
+    fun put(key: String, bitmap: Bitmap) {
+        if (bitmap.isRecycled) return
+        val ownedCopy = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+        cache.put(key, ownedCopy)
     }
-    
+
+    /** Removes the cached object and returns a caller-owned copy when possible. */
+    fun remove(key: String): Bitmap? {
+        val cached = cache.get(key) ?: return null
+        val copy = if (!cached.isRecycled) {
+            cached.copy(cached.config ?: Bitmap.Config.ARGB_8888, true)
+        } else {
+            null
+        }
+        cache.remove(key)
+        return copy
+    }
+
+    fun clear() = cache.evictAll()
     fun getCurrentSize(): Int = cache.size()
-    
     fun getCacheMaxSize(): Int = cache.maxSize()
-    
     fun getHitCount(): Int = cache.hitCount()
 }
 
-/**
- * Extension functions for safe bitmap handling
- */
 fun Bitmap.safeRecycle() {
-    if (!this.isRecycled) {
-        this.recycle()
-    }
+    if (!isRecycled) recycle()
 }
 
 @JvmName("safeRecycleNullable")
@@ -63,31 +81,21 @@ fun Bitmap?.safeRecycle() {
     this?.safeRecycle()
 }
 
-/**
- * Create a scaled bitmap efficiently, recycling the original if requested
- */
 fun Bitmap.createScaledSafely(
     newWidth: Int,
     newHeight: Int,
     filter: Boolean = true,
     recycleOriginal: Boolean = false
 ): Bitmap {
-    if (this.width == newWidth && this.height == newHeight) {
-        return this
-    }
-    
+    require(newWidth > 0 && newHeight > 0)
+    if (width == newWidth && height == newHeight) return this
+
     val scaled = Bitmap.createScaledBitmap(this, newWidth, newHeight, filter)
-    
-    if (recycleOriginal && !this.isRecycled) {
-        this.recycle()
-    }
-    
+    if (recycleOriginal && scaled !== this && !isRecycled) recycle()
     return scaled
 }
 
-/**
- * Create a copy of bitmap with different config if needed
- */
-fun Bitmap.copySafely(config: Bitmap.Config = Bitmap.Config.ARGB_8888, mutable: Boolean = true): Bitmap {
-    return this.copy(config, mutable)
-}
+fun Bitmap.copySafely(
+    config: Bitmap.Config = Bitmap.Config.ARGB_8888,
+    mutable: Boolean = true
+): Bitmap = copy(config, mutable)

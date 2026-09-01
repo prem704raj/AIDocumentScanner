@@ -2,255 +2,251 @@ package com.example.aidocumentscanner.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.RectF
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.resume
+import kotlin.math.max
+import kotlin.math.sqrt
 
-/**
- * OCR Engine using ML Kit for offline text recognition.
- * Provides text extraction and keyword search functionality.
- */
 object OcrEngine {
-    
+
     private const val TAG = "OcrEngine"
-    
+    private const val MAX_RENDER_PIXELS = 4_000_000L
+    const val PAGE_SEPARATOR = "\u000C"
+
     data class TextBlock(
         val text: String,
         val boundingBox: RectF?,
         val lineIndex: Int,
         val wordIndex: Int
     )
-    
+
     data class OcrResult(
         val fullText: String,
         val blocks: List<TextBlock>,
-        val confidence: Float
+        /** ML Kit text-recognition does not expose a document-level confidence value. */
+        val confidence: Float = 0f
     )
-    
+
     data class PageOcrResult(
         val pageIndex: Int,
         val result: OcrResult
     )
-    
+
     data class SearchMatch(
         val pageIndex: Int,
         val lineIndex: Int,
         val startOffset: Int,
         val endOffset: Int,
-        val context: String,  // Surrounding text for preview
+        val context: String,
         val matchedText: String
     )
-    
-    /**
-     * Model download status
-     */
+
     enum class ModelStatus {
         NOT_DOWNLOADED,
         DOWNLOADING,
         DOWNLOADED,
         FAILED
     }
-    
-    private var textRecognizer: com.google.mlkit.vision.text.TextRecognizer? = null
-    
-    /**
-     * Initialize OCR engine
-     */
-    fun initialize(context: Context) {
-        if (textRecognizer == null) {
-            textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        }
+
+    private val recognizer: TextRecognizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
-    
-    /**
-     * Check if OCR model is ready for use
-     */
-    fun isModelReady(): Boolean = textRecognizer != null
-    
-    /**
-     * Force download OCR model (ML Kit downloads automatically, but we provide this for UI feedback)
-     */
+
+    fun initialize(context: Context) {
+        // The currently used com.google.mlkit:text-recognition artifact is bundled.
+        // Touch the lazy recognizer so failures happen during initialization rather than mid-search.
+        recognizer
+    }
+
+    fun isModelReady(): Boolean = true
+
     fun downloadModel(context: Context, onComplete: (Boolean) -> Unit) {
-        initialize(context)
-        // ML Kit downloads the model automatically on first process() call.
-        // We attempt a lightweight call to trigger the download.
-        try {
-            val dummyBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
-            val image = InputImage.fromBitmap(dummyBitmap, 0)
-            textRecognizer?.process(image)
-                ?.addOnSuccessListener { onComplete(true) }
-                ?.addOnFailureListener { onComplete(false) }
-        } catch (e: Exception) {
+        return try {
+            initialize(context)
+            onComplete(true)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to initialize OCR", t)
             onComplete(false)
         }
     }
 
-    /**
-     * Extract text from a single bitmap image
-     */
     suspend fun extractText(bitmap: Bitmap): OcrResult {
-        if (!isModelReady()) {
-            Log.w(TAG, "OCR model not ready, initializing...")
-            // Try to initialize
-            // Note: In real app, you'd wait for model to be ready
-        }
-        
+        if (bitmap.isRecycled) return OcrResult("", emptyList())
+
         return suspendCancellableCoroutine { continuation ->
             try {
                 val image = InputImage.fromBitmap(bitmap, 0)
-                
-                textRecognizer?.process(image)
-                    ?.addOnSuccessListener { visionText ->
-                        val blocks = mutableListOf<TextBlock>()
-                        var lineIndex = 0
-                        
-                        for (block in visionText.textBlocks) {
-                            for (line in block.lines) {
-                                var wordIndex = 0
-                                for (element in line.elements) {
-                                    val boundingBox = element.boundingBox?.let {
-                                        RectF(it.left.toFloat(), it.top.toFloat(), 
-                                              it.right.toFloat(), it.bottom.toFloat())
-                                    }
-                                    blocks.add(TextBlock(
-                                        text = element.text,
-                                        boundingBox = boundingBox,
-                                        lineIndex = lineIndex,
-                                        wordIndex = wordIndex
-                                    ))
-                                    wordIndex++
+                val task = recognizer.process(image)
+
+                task.addOnSuccessListener { visionText ->
+                    if (!continuation.isActive) return@addOnSuccessListener
+
+                    val blocks = mutableListOf<TextBlock>()
+                    var lineIndex = 0
+
+                    visionText.textBlocks.forEach { block ->
+                        block.lines.forEach { line ->
+                            line.elements.forEachIndexed { wordIndex, element ->
+                                val rect = element.boundingBox?.let {
+                                    RectF(
+                                        it.left.toFloat(),
+                                        it.top.toFloat(),
+                                        it.right.toFloat(),
+                                        it.bottom.toFloat()
+                                    )
                                 }
-                                lineIndex++
+                                blocks += TextBlock(
+                                    text = element.text,
+                                    boundingBox = rect,
+                                    lineIndex = lineIndex,
+                                    wordIndex = wordIndex
+                                )
                             }
+                            lineIndex++
                         }
-                        
-                        continuation.resume(OcrResult(
+                    }
+
+                    continuation.resume(
+                        OcrResult(
                             fullText = visionText.text,
                             blocks = blocks,
-                            confidence = 0.9f  // ML Kit doesn't provide confidence
-                        ))
+                            confidence = 0f
+                        )
+                    )
+                }
+
+                task.addOnFailureListener { error ->
+                    Log.e(TAG, "OCR failed", error)
+                    if (continuation.isActive) {
+                        continuation.resume(OcrResult("", emptyList()))
                     }
-                    ?.addOnFailureListener { e ->
-                        Log.e(TAG, "OCR failed: ${e.message}", e)
-                        continuation.resume(OcrResult("", emptyList(), 0f))
-                    }
-            } catch (e: Exception) {
-                Log.e(TAG, "OCR exception: ${e.message}", e)
-                continuation.resume(OcrResult("", emptyList(), 0f))
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "OCR exception", t)
+                if (continuation.isActive) {
+                    continuation.resume(OcrResult("", emptyList()))
+                }
             }
         }
     }
-    
-    /**
-     * Extract text from all pages of a PDF
-     */
-    suspend fun extractTextFromPdf(context: Context, pdfPath: String): List<PageOcrResult> {
+
+    suspend fun extractTextFromPdf(
+        context: Context,
+        pdfPath: String
+    ): List<PageOcrResult> = withContext(Dispatchers.IO) {
+        val file = File(pdfPath)
+        if (!file.exists() || !file.isFile) return@withContext emptyList()
+
         val results = mutableListOf<PageOcrResult>()
-        
+
         try {
-            val file = File(pdfPath)
-            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            val renderer = PdfRenderer(pfd)
-            
-            for (i in 0 until renderer.pageCount) {
-                val page = renderer.openPage(i)
-                
-                // Render at good quality for OCR
-                val scale = 2f
-                val width = (page.width * scale).toInt()
-                val height = (page.height * scale).toInt()
-                
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
-                page.close()
-                
-                val ocrResult = extractText(bitmap)
-                results.add(PageOcrResult(i, ocrResult))
-                
-                bitmap.recycle()
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                PdfRenderer(pfd).use { renderer ->
+                    for (index in 0 until renderer.pageCount) {
+                        renderer.openPage(index).use { page ->
+                            val sourcePixels = page.width.toLong() * page.height.toLong()
+                            val scale = if (sourcePixels <= 0L) {
+                                1f
+                            } else {
+                                sqrt(MAX_RENDER_PIXELS.toDouble() / sourcePixels.toDouble())
+                                    .toFloat()
+                                    .coerceAtMost(2f)
+                                    .coerceAtLeast(0.25f)
+                            }
+
+                            val width = max(1, (page.width * scale).toInt())
+                            val height = max(1, (page.height * scale).toInt())
+                            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+                            try {
+                                bitmap.eraseColor(Color.WHITE)
+                                page.render(
+                                    bitmap,
+                                    null,
+                                    null,
+                                    PdfRenderer.Page.RENDER_MODE_FOR_PRINT
+                                )
+                                results += PageOcrResult(index, extractText(bitmap))
+                            } finally {
+                                if (!bitmap.isRecycled) bitmap.recycle()
+                            }
+                        }
+                    }
+                }
             }
-            
-            renderer.close()
-            pfd.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "PDF OCR failed: ${e.message}", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "PDF OCR failed", t)
         }
-        
-        return results
+
+        results
     }
-    
-    /**
-     * Search for keyword in extracted text
-     * Returns matches with surrounding context
-     */
+
     fun searchKeyword(
         pagesText: List<PageOcrResult>,
         keyword: String,
         caseSensitive: Boolean = false
     ): List<SearchMatch> {
+        if (keyword.isBlank()) return emptyList()
+
         val matches = mutableListOf<SearchMatch>()
-        val searchKeyword = if (caseSensitive) keyword else keyword.lowercase()
-        
-        for (pageResult in pagesText) {
-            val text = if (caseSensitive) pageResult.result.fullText 
-                       else pageResult.result.fullText.lowercase()
-            val originalText = pageResult.result.fullText
-            
-            var index = 0
-            while (true) {
-                val matchIndex = text.indexOf(searchKeyword, index)
-                if (matchIndex == -1) break
-                
-                // Calculate line index
-                val textUpToMatch = originalText.substring(0, matchIndex)
-                val lineIndex = textUpToMatch.count { it == '\n' }
-                
-                // Get context (50 chars before and after)
-                val contextStart = maxOf(0, matchIndex - 50)
-                val contextEnd = minOf(originalText.length, matchIndex + keyword.length + 50)
-                val context = originalText.substring(contextStart, contextEnd)
-                    .replace("\n", " ")
+        val needle = if (caseSensitive) keyword else keyword.lowercase()
+
+        pagesText.forEach { pageResult ->
+            val original = pageResult.result.fullText
+            val haystack = if (caseSensitive) original else original.lowercase()
+            var searchFrom = 0
+
+            while (searchFrom <= haystack.length - needle.length) {
+                val matchIndex = haystack.indexOf(needle, searchFrom)
+                if (matchIndex < 0) break
+
+                val contextStart = (matchIndex - 50).coerceAtLeast(0)
+                val contextEnd = (matchIndex + keyword.length + 50).coerceAtMost(original.length)
+                val context = original.substring(contextStart, contextEnd)
+                    .replace('\n', ' ')
                     .trim()
-                
-                matches.add(SearchMatch(
+
+                matches += SearchMatch(
                     pageIndex = pageResult.pageIndex,
-                    lineIndex = lineIndex,
+                    lineIndex = original.substring(0, matchIndex).count { it == '\n' },
                     startOffset = matchIndex,
                     endOffset = matchIndex + keyword.length,
-                    context = "...$context...",
-                    matchedText = originalText.substring(matchIndex, matchIndex + keyword.length)
-                ))
-                
-                index = matchIndex + 1
+                    context = context,
+                    matchedText = original.substring(matchIndex, matchIndex + keyword.length)
+                )
+
+                searchFrom = matchIndex + max(1, needle.length)
             }
         }
-        
+
         return matches
     }
-    
-    /**
-     * Get combined text from all pages
-     */
-    fun getCombinedText(pagesText: List<PageOcrResult>): String {
-        return pagesText.mapIndexed { index, result ->
-            "--- Page ${index + 1} ---\n\n${result.result.fullText}"
-        }.joinToString("\n\n")
-    }
-    
-    /**
-     * Count total words across all pages
-     */
-    fun countWords(pagesText: List<PageOcrResult>): Int {
-        return pagesText.sumOf { 
-            it.result.fullText.split(Regex("\\s+")).filter { word -> word.isNotBlank() }.size 
+
+    fun getCombinedText(pagesText: List<PageOcrResult>): String =
+        pagesText.joinToString(PAGE_SEPARATOR) { it.result.fullText }
+
+    fun splitCombinedText(combinedText: String?): List<String> =
+        combinedText
+            ?.split(PAGE_SEPARATOR)
+            ?.map { it.trim() }
+            ?: emptyList()
+
+    fun countWords(pagesText: List<PageOcrResult>): Int =
+        pagesText.sumOf { page ->
+            page.result.fullText
+                .split(Regex("\\s+"))
+                .count { it.isNotBlank() }
         }
-    }
 }

@@ -72,7 +72,8 @@ enum class PdfTool(
 @Composable
 fun PdfToolsScreen(
     onBack: () -> Unit,
-    onMergeComplete: (Long) -> Unit
+    onMergeComplete: (Long) -> Unit,
+    onOptimizeRequested: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -243,10 +244,15 @@ fun PdfToolsScreen(
                 selectedTool == null -> {
                     ToolSelectionGrid(
                         onToolSelected = { tool ->
-                            selectedTool = tool
-                            selectedDocuments = emptyList()
-                            selectedDocument = null
-                            externalPdfs = emptyList()
+                            if (tool == PdfTool.OPTIMIZE) {
+                                onOptimizeRequested()
+                            } else {
+                                selectedTool = tool
+                                selectedDocuments = emptyList()
+                                selectedDocument = null
+                                selectedExternalPdf = null
+                                externalPdfs = emptyList()
+                            }
                         }
                     )
                 }
@@ -416,9 +422,7 @@ fun PdfToolsScreen(
                                     when (selectedTool) {
                                         PdfTool.ADD_WATERMARK -> showWatermarkDialog = true
                                         PdfTool.PASSWORD_PROTECT -> showPasswordDialog = true
-                                        PdfTool.OPTIMIZE -> {
-                                            // Handle optimize
-                                        }
+                                        PdfTool.OPTIMIZE -> onOptimizeRequested()
                                         else -> {}
                                     }
                                 }

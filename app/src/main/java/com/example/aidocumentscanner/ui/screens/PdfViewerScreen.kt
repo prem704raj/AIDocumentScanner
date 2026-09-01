@@ -42,6 +42,7 @@ import java.io.File
 @Composable
 fun PdfViewerScreen(
     documentId: Long,
+    initialPage: Int = 0,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -59,11 +60,16 @@ fun PdfViewerScreen(
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     
     // Load document and render pages
-    LaunchedEffect(documentId) {
+    LaunchedEffect(documentId, initialPage) {
         document = repository.getDocumentById(documentId)
         document?.let { doc ->
             pages = withContext(Dispatchers.IO) {
                 renderPdfPagesFromPath(context, doc.pdfPath)
+            }
+            if (pages.isNotEmpty()) {
+                val safePage = initialPage.coerceIn(0, pages.lastIndex)
+                currentPage = safePage
+                listState.scrollToItem(safePage)
             }
         }
         isLoading = false
