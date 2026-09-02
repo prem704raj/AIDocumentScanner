@@ -2,10 +2,13 @@
 agp = "9.1.1"
 kotlin = "2.1.0"
 ksp = "2.1.0-1.0.29"
+
 coreKtx = "1.17.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
+testCore = "1.6.1"
+testRunner = "1.6.2"
 lifecycleRuntimeKtx = "2.9.3"
 activityCompose = "1.9.3"
 composeBom = "2024.11.00"
@@ -13,19 +16,29 @@ navigationCompose = "2.8.4"
 cameraX = "1.6.2"
 coil = "2.5.0"
 room = "2.8.4"
+datastore = "1.2.1"
+coroutines = "1.10.2"
+
+# RELEASE BLOCKER:
+# iText 5 is EOL and dual AGPL/commercial licensed.
 itextpdf = "5.5.13.3"
+
 opencv = "4.5.0"
 mlkitTextRecognition = "16.0.0"
-datastore = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-test-core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "testCore" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "testRunner" }
+
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
@@ -35,15 +48,23 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+
 androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraX" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "cameraX" }
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
 androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
+
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+
 itextpdf = { group = "com.itextpdf", name = "itextpdf", version.ref = "itextpdf" }
 opencv = { group = "com.quickbirdstudios", name = "opencv", version.ref = "opencv" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }

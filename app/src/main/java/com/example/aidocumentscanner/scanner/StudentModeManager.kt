@@ -215,7 +215,7 @@ object StudentModeManager {
     private fun sanitizeToken(value: String): String =
         value.trim()
             .replace(Regex("\\s+"), "_")
-            .replace(Regex("[^\\p{L}\\p{N}_-]"), "")
+            .replace(Regex("[^\\p{L}\\p{M}\\p{N}_-]"), "")
             .take(40)
 
     val suggestedSubjects: List<String> = listOf(

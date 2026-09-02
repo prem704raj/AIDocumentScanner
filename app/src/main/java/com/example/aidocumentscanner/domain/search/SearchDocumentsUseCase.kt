@@ -1,7 +1,7 @@
 package com.example.aidocumentscanner.domain.search
 
 import android.content.Context
-import com.example.aidocumentscanner.data.DocumentRepository
+import com.example.aidocumentscanner.data.DocumentStore
 import com.example.aidocumentscanner.ocr.OcrEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -21,75 +21,131 @@ data class DocumentSearchResult(
 }
 
 /**
- * Global search business logic.
- *
- * The UI does not decide when/how to OCR or persist text anymore.
+ * ViewModel-facing contract.
+ * Tests can provide a deterministic fake without Android/PDF/ML Kit.
  */
-class SearchDocumentsUseCase(
-    context: Context,
-    private val repository: DocumentRepository
-) {
-    private val appContext = context.applicationContext
-
-    suspend operator fun invoke(
+interface DocumentSearchEngine {
+    suspend fun search(
         query: String,
         onProgress: (String) -> Unit = {}
-    ): List<DocumentSearchResult> = withContext(Dispatchers.IO) {
-        val needle = query.trim()
-        require(needle.isNotBlank()) {
-            "Search query is empty"
-        }
+    ): List<DocumentSearchResult>
+}
 
-        val documents = repository.getAllDocuments().first()
-        val output = mutableListOf<DocumentSearchResult>()
+class SearchDocumentsUseCase(
+    context: Context,
+    private val repository:
+        DocumentStore
+) : DocumentSearchEngine {
 
-        documents.forEachIndexed { index, document ->
-            if (document.name.contains(needle, ignoreCase = true)) {
-                output += DocumentSearchResult(
-                    documentId = document.id,
-                    documentName = document.name,
-                    pageIndex = 0,
-                    context = "Document name: ${document.name}",
-                    source = DocumentSearchResult.Source.DOCUMENT_NAME
-                )
+    private val appContext =
+        context.applicationContext
+
+    override suspend fun search(
+        query: String,
+        onProgress: (String) -> Unit
+    ): List<DocumentSearchResult> =
+        withContext(Dispatchers.IO) {
+            val needle = query.trim()
+
+            require(needle.isNotBlank()) {
+                "Search query is empty"
             }
 
-            val pages = if (document.isOcrProcessed) {
-                OcrEngine.decodePersisted(document.extractedText)
-            } else {
-                onProgress("Indexing ${index + 1}/${documents.size}")
+            val documents =
+                repository
+                    .getAllDocuments()
+                    .first()
 
-                val extracted = OcrEngine.extractTextFromPdf(
-                    appContext,
-                    document.pdfPath
-                ) { current, total ->
-                    onProgress(
-                        "Indexing ${index + 1}/${documents.size} • page $current/$total"
-                    )
+            buildList {
+                documents.forEachIndexed {
+                        index,
+                        document ->
+
+                    if (
+                        document.name.contains(
+                            needle,
+                            ignoreCase = true
+                        )
+                    ) {
+                        add(
+                            DocumentSearchResult(
+                                documentId =
+                                    document.id,
+                                documentName =
+                                    document.name,
+                                pageIndex = 0,
+                                context =
+                                    "Document name: ${document.name}",
+                                source =
+                                    DocumentSearchResult
+                                        .Source
+                                        .DOCUMENT_NAME
+                            )
+                        )
+                    }
+
+                    val pages =
+                        if (
+                            document
+                                .isOcrProcessed
+                        ) {
+                            OcrEngine
+                                .decodePersisted(
+                                    document
+                                        .extractedText
+                                )
+                        } else {
+                            onProgress(
+                                "Indexing ${index + 1}/${documents.size}"
+                            )
+
+                            val extracted =
+                                OcrEngine
+                                    .extractTextFromPdf(
+                                        appContext,
+                                        document.pdfPath
+                                    ) {
+                                            current,
+                                            total ->
+                                        onProgress(
+                                            "Indexing ${index + 1}/${documents.size} • page $current/$total"
+                                        )
+                                    }
+
+                            repository.updateOcrText(
+                                document.id,
+                                OcrEngine
+                                    .encodeForPersistence(
+                                        extracted
+                                    )
+                            )
+
+                            extracted
+                        }
+
+                    OcrEngine.searchKeyword(
+                        pagesText = pages,
+                        keyword = needle,
+                        caseSensitive = false
+                    ).forEach { match ->
+                        add(
+                            DocumentSearchResult(
+                                documentId =
+                                    document.id,
+                                documentName =
+                                    document.name,
+                                pageIndex =
+                                    match.pageIndex,
+                                context =
+                                    match.context,
+                                source =
+                                    DocumentSearchResult
+                                        .Source
+                                        .OCR_TEXT
+                            )
+                        )
+                    }
                 }
-
-                repository.updateOcrText(
-                    document.id,
-                    OcrEngine.encodeForPersistence(extracted)
-                )
-                extracted
-            }
-
-            OcrEngine.searchKeyword(
-                pagesText = pages,
-                keyword = needle,
-                caseSensitive = false
-            ).forEach { match ->
-                output += DocumentSearchResult(
-                    documentId = document.id,
-                    documentName = document.name,
-                    pageIndex = match.pageIndex,
-                    context = match.context,
-                    source = DocumentSearchResult.Source.OCR_TEXT
-                )
             }
         }
-
-        output
-    }
 }

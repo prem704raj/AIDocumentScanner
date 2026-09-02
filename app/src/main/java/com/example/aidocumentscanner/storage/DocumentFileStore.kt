@@ -3,38 +3,49 @@ package com.example.aidocumentscanner.storage
 import com.example.aidocumentscanner.data.Document
 import java.io.File
 
-/**
- * Filesystem boundary for persisted document files.
- *
- * PdfGenerator creates PDFs; it should not also become the generic document-delete service.
- */
-class DocumentFileStore {
+class DocumentFileStore : DocumentFiles {
 
-    fun documentExists(document: Document): Boolean =
-        File(document.pdfPath).isFile
-
-    fun deleteDocumentFiles(document: Document): Result<Unit> =
+    override fun deleteDocumentFiles(
+        document: Document
+    ): Result<Unit> =
         runCatching {
-            deleteIfPresent(
-                file = File(document.pdfPath),
-                label = "PDF"
+            deleteRequiredFile(
+                File(document.pdfPath),
+                "PDF"
             )
 
             document.thumbnailPath
                 ?.takeIf(String::isNotBlank)
                 ?.let { path ->
-                    deleteIfPresent(
-                        file = File(path),
-                        label = "thumbnail"
+                    deleteOptionalFile(
+                        File(path),
+                        "thumbnail"
                     )
                 }
         }
 
-    private fun deleteIfPresent(
+    override fun documentExists(
+        document: Document
+    ): Boolean =
+        File(document.pdfPath).isFile
+
+    private fun deleteRequiredFile(
         file: File,
         label: String
     ) {
         if (!file.exists()) return
+
+        check(file.delete()) {
+            "Could not delete $label"
+        }
+    }
+
+    private fun deleteOptionalFile(
+        file: File,
+        label: String
+    ) {
+        if (!file.exists()) return
+
         check(file.delete()) {
             "Could not delete $label"
         }

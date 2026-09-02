@@ -6,7 +6,6 @@ plugins {
 }
 
 android {
-    // RELEASE IDENTITY GATE: resolve this before Phase 11.
     namespace = "com.example.aidocumentscanner"
     compileSdk = 36
 
@@ -14,8 +13,10 @@ android {
         applicationId = "com.example.aidocumentscanner"
         minSdk = 26
         targetSdk = 36
+
         versionCode = 1
         versionName = "1.0"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -23,6 +24,7 @@ android {
         debug {
             isMinifyEnabled = false
         }
+
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -49,11 +51,32 @@ android {
 
     ksp {
         arg("room.generateKotlin", "true")
+
+        // Export Room schemas to source control so future migration changes
+        // can be tested against an immutable historical schema.
+        arg(
+            "room.schemaLocation",
+            file("$projectDir/schemas").path
+        )
+    }
+
+    sourceSets {
+        getByName("androidTest").assets.srcDir(
+            "$projectDir/schemas"
+        )
+    }
+
+    testOptions {
+        animationsDisabled = true
+
+        unitTests {
+            isReturnDefaultValues = true
+        }
     }
 
     lint {
         abortOnError = true
-        checkReleaseBuilds = false
+        checkReleaseBuilds = true
         warningsAsErrors = false
     }
 
@@ -98,17 +121,33 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
-    // RELEASE BLOCKER: iText licensing/replacement must be resolved before closed-source commercial release.
+    /*
+     * RELEASE BLOCKER retained from Phase 9.
+     * Resolve iText AGPL/commercial licensing or replace the PDF engine
+     * before a closed-source commercial release.
+     */
     implementation(libs.itextpdf)
 
     implementation(libs.opencv)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.datastore.preferences)
 
+    // ---------------------------
+    // Local/JVM tests
+    // ---------------------------
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 
+    // ---------------------------
+    // Instrumented/device tests
+    // ---------------------------
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 

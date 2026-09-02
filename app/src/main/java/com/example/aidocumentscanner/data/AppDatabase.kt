@@ -8,9 +8,15 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Document::class, Folder::class],
+    entities = [
+        Document::class,
+        Folder::class
+    ],
     version = 3,
-    exportSchema = false
+
+    // Phase 10 enables schema export so all future migrations can be
+    // regression-tested against committed historical schemas.
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -19,50 +25,90 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         @Volatile
-        private var INSTANCE: AppDatabase? = null
+        private var INSTANCE:
+            AppDatabase? = null
 
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE documents ADD COLUMN folderId INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE documents ADD COLUMN documentType TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE documents ADD COLUMN extractedText TEXT DEFAULT NULL")
-                db.execSQL("ALTER TABLE documents ADD COLUMN isOcrProcessed INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE documents ADD COLUMN lastSharedAt INTEGER DEFAULT NULL")
-                db.execSQL("ALTER TABLE documents ADD COLUMN lastViewedAt INTEGER DEFAULT NULL")
-
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS folders (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        name TEXT NOT NULL,
-                        icon TEXT NOT NULL DEFAULT 'folder',
-                        color INTEGER NOT NULL DEFAULT 4284704497,
-                        isSystemFolder INTEGER NOT NULL DEFAULT 0,
-                        documentCount INTEGER NOT NULL DEFAULT 0,
-                        createdAt INTEGER NOT NULL DEFAULT 0
+        val MIGRATION_1_2 =
+            object : Migration(1, 2) {
+                override fun migrate(
+                    db:
+                        SupportSQLiteDatabase
+                ) {
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN folderId INTEGER DEFAULT NULL"
                     )
-                    """.trimIndent()
-                )
-            }
-        }
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN documentType TEXT DEFAULT NULL"
+                    )
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN extractedText TEXT DEFAULT NULL"
+                    )
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN isOcrProcessed INTEGER NOT NULL DEFAULT 0"
+                    )
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN lastSharedAt INTEGER DEFAULT NULL"
+                    )
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN lastViewedAt INTEGER DEFAULT NULL"
+                    )
 
-        val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE documents ADD COLUMN emoji TEXT DEFAULT NULL")
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS folders (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            name TEXT NOT NULL,
+                            icon TEXT NOT NULL DEFAULT 'folder',
+                            color INTEGER NOT NULL DEFAULT 4284704497,
+                            isSystemFolder INTEGER NOT NULL DEFAULT 0,
+                            documentCount INTEGER NOT NULL DEFAULT 0,
+                            createdAt INTEGER NOT NULL DEFAULT 0
+                        )
+                        """.trimIndent()
+                    )
+                }
             }
-        }
 
-        fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "document_scanner_db"
-                )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    .build()
-                    .also { INSTANCE = it }
+        val MIGRATION_2_3 =
+            object : Migration(2, 3) {
+                override fun migrate(
+                    db:
+                        SupportSQLiteDatabase
+                ) {
+                    db.execSQL(
+                        "ALTER TABLE documents ADD COLUMN emoji TEXT DEFAULT NULL"
+                    )
+                }
             }
+
+        val ALL_MIGRATIONS:
+            Array<Migration> =
+            arrayOf(
+                MIGRATION_1_2,
+                MIGRATION_2_3
+            )
+
+        fun getDatabase(
+            context: Context
+        ): AppDatabase {
+            return INSTANCE
+                ?: synchronized(this) {
+                    INSTANCE
+                        ?: Room.databaseBuilder(
+                            context
+                                .applicationContext,
+                            AppDatabase::
+                                class.java,
+                            "document_scanner_db"
+                        )
+                            .addMigrations(
+                                *ALL_MIGRATIONS
+                            )
+                            .build()
+                            .also {
+                                INSTANCE = it
+                            }
+                }
         }
     }
 }

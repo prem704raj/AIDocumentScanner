@@ -14,7 +14,7 @@ import kotlin.math.absoluteValue
 class DocumentRepository(
     private val documentDao: DocumentDao,
     private val folderDao: FolderDao
-) {
+) : DocumentStore {
     constructor(context: Context) : this(
         documentDao = AppDatabase
             .getDatabase(context.applicationContext)
@@ -24,7 +24,7 @@ class DocumentRepository(
             .folderDao()
     )
 
-    fun getAllDocuments(): Flow<List<Document>> =
+    override fun getAllDocuments(): Flow<List<Document>> =
         documentDao.getAllDocuments()
 
     fun getRecentDocuments(limit: Int = 10): Flow<List<Document>> =
@@ -42,7 +42,7 @@ class DocumentRepository(
     suspend fun updateDocument(document: Document) =
         documentDao.updateDocument(document)
 
-    suspend fun deleteDocument(document: Document) {
+    override suspend fun deleteDocument(document: Document) {
         val folderId = document.folderId
         documentDao.deleteDocument(document)
         folderId?.let { folderDao.updateDocumentCount(it) }
@@ -57,7 +57,7 @@ class DocumentRepository(
     suspend fun getDocumentCount(): Int =
         documentDao.getDocumentCount()
 
-    suspend fun renameDocument(documentId: Long, newName: String) {
+    override suspend fun renameDocument(documentId: Long, newName: String) {
         val clean = newName.trim().take(100)
         require(clean.isNotBlank()) {
             "Document name cannot be empty"
@@ -76,7 +76,7 @@ class DocumentRepository(
             System.currentTimeMillis()
         )
 
-    suspend fun updateOcrText(documentId: Long, encodedText: String) =
+    override suspend fun updateOcrText(documentId: Long, encodedText: String) =
         documentDao.updateOcrText(documentId, encodedText)
 
     suspend fun markViewed(documentId: Long) =
@@ -85,7 +85,7 @@ class DocumentRepository(
             System.currentTimeMillis()
         )
 
-    suspend fun markShared(documentId: Long) =
+    override suspend fun markShared(documentId: Long) =
         documentDao.updateLastShared(
             documentId,
             System.currentTimeMillis()

@@ -35,6 +35,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -93,16 +94,15 @@ fun DocumentsScreen(
         )
     )
 
-    val documents by viewModel.allDocuments.collectAsState()
-    val visible by viewModel.visibleDocuments.collectAsState()
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.state.collectAsState()
+    val documents = uiState.documents
+    val visible = uiState.visibleDocuments
 
     val snackbar = remember { SnackbarHostState() }
 
-    LaunchedEffect(uiState.message) {
-        uiState.message?.let {
-            snackbar.showSnackbar(it)
-            viewModel.dismissMessage()
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            snackbar.showSnackbar(message)
         }
     }
 
@@ -351,7 +351,7 @@ fun DocumentsScreen(
                     enabled = value.isNotBlank(),
                     onClick = {
                         val newName = value.trim()
-                        viewModel.renameDocument(document.id, newName)
+                        viewModel.rename(document.id, newName)
                         renameDocument = null
                     }
                 ) { Text("Save") }
@@ -379,7 +379,7 @@ fun DocumentsScreen(
                         containerColor = MaterialTheme.colorScheme.error
                     ),
                     onClick = {
-                        viewModel.deleteDocument(document)
+                        viewModel.delete(document)
                         deleteDocument = null
                     }
                 ) { Text("Delete") }
@@ -399,7 +399,7 @@ private fun SortButton(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    androidx.compose.material3.FilterChip(
+    FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(text) }
