@@ -1,165 +1,229 @@
 package com.example.aidocumentscanner.scanner
 
 import android.content.Context
-import android.graphics.Bitmap
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.*
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+
+private val Context.studentModeDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "student_mode"
+)
 
 /**
- * Student Mode settings for exam/notes scanning optimization.
- * Provides preset configurations for academic document scanning.
+ * Student scanning is deliberately configuration, not a second document store.
+ * Subject ownership lives in Room Folder rows; this object stores only the active workflow.
  */
 object StudentModeManager {
-    
-    private val Context.studentModeDataStore: DataStore<Preferences> by preferencesDataStore(name = "student_mode")
-    
     private val ENABLED = booleanPreferencesKey("student_mode_enabled")
-    private val SHARP_TEXT = booleanPreferencesKey("sharp_text_enhancement")
-    private val MARGIN_CLEANUP = booleanPreferencesKey("margin_cleanup")
-    private val PAGE_NUMBERING = booleanPreferencesKey("page_numbering")
-    private val BLACK_WHITE = booleanPreferencesKey("black_and_white")
+    private val AUTO_ENHANCE = booleanPreferencesKey("student_auto_enhance")
     private val AUTO_FILENAME = booleanPreferencesKey("auto_filename")
-    private val SUBJECT = stringPreferencesKey("subject")
-    
+    private val SUBJECT_ID = longPreferencesKey("student_subject_id")
+
+    // Reuse the original key so an older stored subject string survives Phase 7.
+    private val SUBJECT_NAME = stringPreferencesKey("subject")
+    private val PRESET = stringPreferencesKey("student_scan_preset")
+
+    enum class StudentScanPreset(
+        val storageValue: String,
+        val label: String,
+        val shortLabel: String,
+        val description: String,
+        val recommendedFilter: ImageEnhancer.FilterType,
+        val recommendedPageSize: String,
+        val recommendedQuality: String
+    ) {
+        NOTES(
+            storageValue = "notes",
+            label = "Notes",
+            shortLabel = "Notes",
+            description = "Notebook pages, handwritten notes and printed notes.",
+            recommendedFilter = ImageEnhancer.FilterType.DOCUMENT,
+            recommendedPageSize = "A4",
+            recommendedQuality = "HIGH"
+        ),
+        ASSIGNMENT(
+            storageValue = "assignment",
+            label = "Assignment",
+            shortLabel = "Assignment",
+            description = "Submitted work, lab sheets and written assignments.",
+            recommendedFilter = ImageEnhancer.FilterType.DOCUMENT,
+            recommendedPageSize = "A4",
+            recommendedQuality = "HIGH"
+        ),
+        LECTURE(
+            storageValue = "lecture",
+            label = "Lecture notes",
+            shortLabel = "Lecture",
+            description = "Fast multi-page classroom and lecture scanning.",
+            recommendedFilter = ImageEnhancer.FilterType.DOCUMENT,
+            recommendedPageSize = "A4",
+            recommendedQuality = "HIGH"
+        ),
+        WHITEBOARD(
+            storageValue = "whiteboard",
+            label = "Whiteboard",
+            shortLabel = "Whiteboard",
+            description = "Preserve colored diagrams and board writing.",
+            recommendedFilter = ImageEnhancer.FilterType.COLOR_ENHANCE,
+            recommendedPageSize = "FIT_IMAGE",
+            recommendedQuality = "HIGH"
+        ),
+        BOOK(
+            storageValue = "book",
+            label = "Book pages",
+            shortLabel = "Book",
+            description = "Textbook, reference-book and chapter pages.",
+            recommendedFilter = ImageEnhancer.FilterType.DOCUMENT,
+            recommendedPageSize = "FIT_IMAGE",
+            recommendedQuality = "HIGH"
+        ),
+        QUESTION_PAPER(
+            storageValue = "question_paper",
+            label = "Question paper",
+            shortLabel = "Question Paper",
+            description = "Exam papers, sample papers and worksheets.",
+            recommendedFilter = ImageEnhancer.FilterType.DOCUMENT,
+            recommendedPageSize = "A4",
+            recommendedQuality = "HIGH"
+        );
+
+        companion object {
+            fun fromStored(value: String?): StudentScanPreset =
+                entries.firstOrNull {
+                    it.storageValue == value || it.name == value
+                } ?: NOTES
+        }
+    }
+
     data class StudentModeSettings(
         val enabled: Boolean = false,
-        val sharpTextEnhancement: Boolean = true,
-        val marginCleanup: Boolean = true,
-        val pageNumbering: Boolean = false,
-        val blackAndWhite: Boolean = false,
+        val autoEnhance: Boolean = true,
         val autoFilename: Boolean = true,
-        val subject: String = ""
+        val selectedSubjectId: Long? = null,
+        val selectedSubjectName: String = "",
+        val preset: StudentScanPreset = StudentScanPreset.NOTES
     )
-    
-    /**
-     * Get student mode settings flow
-     */
-    fun getSettings(context: Context): Flow<StudentModeSettings> {
-        return context.studentModeDataStore.data.map { prefs ->
+
+    fun getSettings(context: Context): Flow<StudentModeSettings> =
+        context.studentModeDataStore.data.map { prefs ->
             StudentModeSettings(
                 enabled = prefs[ENABLED] ?: false,
-                sharpTextEnhancement = prefs[SHARP_TEXT] ?: true,
-                marginCleanup = prefs[MARGIN_CLEANUP] ?: true,
-                pageNumbering = prefs[PAGE_NUMBERING] ?: false,
-                blackAndWhite = prefs[BLACK_WHITE] ?: false,
+                autoEnhance = prefs[AUTO_ENHANCE] ?: true,
                 autoFilename = prefs[AUTO_FILENAME] ?: true,
-                subject = prefs[SUBJECT] ?: ""
+                selectedSubjectId = prefs[SUBJECT_ID]?.takeIf { it > 0L },
+                selectedSubjectName = prefs[SUBJECT_NAME].orEmpty(),
+                preset = StudentScanPreset.fromStored(prefs[PRESET])
             )
         }
-    }
-    
-    /**
-     * Get current settings synchronously
-     */
-    fun getSettingsSync(context: Context): StudentModeSettings {
-        return runBlocking {
-            getSettings(context).first()
-        }
-    }
-    
-    /**
-     * Update student mode enabled state
-     */
-    suspend fun setEnabled(context: Context, enabled: Boolean) {
-        context.studentModeDataStore.edit { prefs ->
-            prefs[ENABLED] = enabled
-        }
-    }
-    
-    /**
-     * Update all settings
-     */
-    suspend fun updateSettings(context: Context, settings: StudentModeSettings) {
-        context.studentModeDataStore.edit { prefs ->
-            prefs[ENABLED] = settings.enabled
-            prefs[SHARP_TEXT] = settings.sharpTextEnhancement
-            prefs[MARGIN_CLEANUP] = settings.marginCleanup
-            prefs[PAGE_NUMBERING] = settings.pageNumbering
-            prefs[BLACK_WHITE] = settings.blackAndWhite
-            prefs[AUTO_FILENAME] = settings.autoFilename
-            prefs[SUBJECT] = settings.subject
-        }
-    }
-    
-    /**
-     * Generate auto filename based on settings
-     */
-    fun generateFilename(settings: StudentModeSettings): String {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        return if (settings.subject.isNotBlank()) {
-            "${settings.subject}_$date"
-        } else {
-            "Scan_$date"
-        }
-    }
-    
-    /**
-     * Apply student mode enhancements to bitmap
-     */
-    fun applyEnhancements(bitmap: Bitmap, settings: StudentModeSettings): Bitmap {
-        var result = bitmap
-        
-        if (settings.sharpTextEnhancement) {
-            result = ImageEnhancer.applyFilter(result, ImageEnhancer.FilterType.SHARPEN)
-            result = ImageEnhancer.adjustContrast(result, 1.3f)
-        }
-        
-        if (settings.blackAndWhite) {
-            result = ImageEnhancer.applyFilter(result, ImageEnhancer.FilterType.BLACK_WHITE)
-        } else if (settings.marginCleanup) {
-            result = ImageEnhancer.adjustBrightness(result, 20)
-        }
-        
-        return result
-    }
-    
-    /**
-     * Get enhancement settings for student mode
-     */
-    fun getEnhancementSettings(settings: StudentModeSettings): DocumentTypeDetector.EnhancementSettings {
-        return DocumentTypeDetector.EnhancementSettings(
-            contrast = if (settings.sharpTextEnhancement) 1.4f else 1.0f,
-            brightness = if (settings.marginCleanup) 20 else 0,
-            sharpness = if (settings.sharpTextEnhancement) 1.5f else 1.0f,
-            denoise = true,
-            removeBackground = settings.marginCleanup,
-            blackAndWhite = settings.blackAndWhite
-        )
-    }
-}
 
-/**
- * Subject presets for quick selection
- */
-object SubjectPresets {
-    val commonSubjects = listOf(
+    suspend fun setEnabled(context: Context, enabled: Boolean) {
+        context.studentModeDataStore.edit { it[ENABLED] = enabled }
+    }
+
+    suspend fun setAutoEnhance(context: Context, enabled: Boolean) {
+        context.studentModeDataStore.edit { it[AUTO_ENHANCE] = enabled }
+    }
+
+    suspend fun setAutoFilename(context: Context, enabled: Boolean) {
+        context.studentModeDataStore.edit { it[AUTO_FILENAME] = enabled }
+    }
+
+    suspend fun setPreset(
+        context: Context,
+        preset: StudentScanPreset
+    ) {
+        context.studentModeDataStore.edit {
+            it[PRESET] = preset.storageValue
+        }
+    }
+
+    suspend fun selectSubject(
+        context: Context,
+        folderId: Long?,
+        folderName: String
+    ) {
+        context.studentModeDataStore.edit { prefs ->
+            if (folderId == null || folderId <= 0L) {
+                prefs.remove(SUBJECT_ID)
+                prefs[SUBJECT_NAME] = ""
+            } else {
+                prefs[SUBJECT_ID] = folderId
+                prefs[SUBJECT_NAME] = folderName.trim()
+            }
+        }
+    }
+
+    suspend fun configureQuickScan(
+        context: Context,
+        preset: StudentScanPreset,
+        subjectId: Long?,
+        subjectName: String
+    ) {
+        context.studentModeDataStore.edit { prefs ->
+            prefs[ENABLED] = true
+            prefs[PRESET] = preset.storageValue
+            if (subjectId != null && subjectId > 0L) {
+                prefs[SUBJECT_ID] = subjectId
+                prefs[SUBJECT_NAME] = subjectName.trim()
+            }
+        }
+    }
+
+    fun documentType(settings: StudentModeSettings): String? =
+        if (settings.enabled) {
+            "student:${settings.preset.storageValue}"
+        } else {
+            null
+        }
+
+    fun generateFilename(
+        settings: StudentModeSettings,
+        timestamp: Long = System.currentTimeMillis()
+    ): String {
+        val date = SimpleDateFormat(
+            "yyyy-MM-dd",
+            Locale.getDefault()
+        ).format(Date(timestamp))
+
+        val subject = sanitizeToken(
+            settings.selectedSubjectName.ifBlank { "Study" }
+        )
+        val preset = sanitizeToken(settings.preset.shortLabel)
+
+        return "${subject}_${preset}_$date"
+            .replace(Regex("_+"), "_")
+            .trim('_')
+            .take(90)
+            .ifBlank { "Study_Scan_$date" }
+    }
+
+    private fun sanitizeToken(value: String): String =
+        value.trim()
+            .replace(Regex("\\s+"), "_")
+            .replace(Regex("[^\\p{L}\\p{N}_-]"), "")
+            .take(40)
+
+    val suggestedSubjects: List<String> = listOf(
         "Mathematics",
         "Physics",
         "Chemistry",
-        "Biology",
-        "English",
-        "History",
-        "Geography",
-        "Economics",
         "Computer Science",
-        "Hindi",
-        "Sanskrit",
-        "Social Science",
-        "Accounts",
-        "Business Studies",
-        "Political Science",
-        "Psychology",
-        "Sociology",
-        "Notes",
-        "Assignment",
-        "Question Paper",
-        "Answer Sheet"
+        "DSA",
+        "DBMS",
+        "OOP",
+        "COA",
+        "Operating Systems",
+        "Computer Networks",
+        "English",
+        "Aptitude"
     )
 }

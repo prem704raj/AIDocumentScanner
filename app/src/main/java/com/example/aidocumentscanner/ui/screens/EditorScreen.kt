@@ -25,13 +25,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.RotateLeft
-import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -45,15 +45,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -67,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.scanner.DocumentScanner
 import com.example.aidocumentscanner.scanner.ImageEnhancer
 import com.example.aidocumentscanner.scanner.PerspectiveCorrector
+import com.example.aidocumentscanner.scanner.StudentModeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,14 +88,19 @@ fun EditorScreen(
     onReorderPages: (Int, Int) -> Unit = { _, _ -> },
     onDuplicatePage: (Int) -> Unit = {}
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val studentSettings by StudentModeManager.getSettings(context).collectAsState(
+        initial = StudentModeManager.StudentModeSettings()
+    )
     var currentPage by remember { mutableIntStateOf(0) }
     var selectedFilter by remember { mutableStateOf(ImageEnhancer.FilterType.ORIGINAL) }
     var isProcessing by remember { mutableStateOf(false) }
     var showManualCrop by remember { mutableStateOf(false) }
 
     val filterBaselines = remember { mutableStateListOf<Bitmap>() }
+    val presetApplied = remember { mutableStateMapOf<Int, String>() }
 
     LaunchedEffect(pages.size) {
         while (filterBaselines.size < pages.size) {
@@ -102,6 +111,43 @@ fun EditorScreen(
         }
         if (currentPage > pages.lastIndex) {
             currentPage = pages.lastIndex.coerceAtLeast(0)
+        }
+    }
+
+    LaunchedEffect(
+        studentSettings.enabled,
+        studentSettings.autoEnhance,
+        studentSettings.preset,
+        currentPage,
+        pages.size
+    ) {
+        if (!studentSettings.enabled || !studentSettings.autoEnhance) {
+            return@LaunchedEffect
+        }
+
+        val index = currentPage
+        val source = filterBaselines.getOrNull(index)
+            ?: pages.getOrNull(index)
+            ?: return@LaunchedEffect
+        val presetKey = studentSettings.preset.storageValue
+
+        if (presetApplied[index] == presetKey) {
+            return@LaunchedEffect
+        }
+
+        isProcessing = true
+        try {
+            val filter = studentSettings.preset.recommendedFilter
+            val result = withContext(Dispatchers.Default) {
+                ImageEnhancer.applyFilter(source, filter)
+            }
+            selectedFilter = filter
+            onPageUpdated(index, result)
+            presetApplied[index] = presetKey
+        } catch (_: Throwable) {
+            snackbar.showSnackbar("Study preset enhancement could not be applied")
+        } finally {
+            isProcessing = false
         }
     }
 
@@ -233,6 +279,26 @@ fun EditorScreen(
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (studentSettings.enabled) {
+                        item {
+                            FilterChip(
+                                selected = true,
+                                onClick = {},
+                                label = {
+                                    Text(
+                                        buildString {
+                                            append("Study: ")
+                                            append(studentSettings.preset.shortLabel)
+                                            if (studentSettings.selectedSubjectName.isNotBlank()) {
+                                                append(" • ")
+                                                append(studentSettings.selectedSubjectName)
+                                            }
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
                     visibleFilters.forEach { (label, filter) ->
                         item {
                             FilterChip(
@@ -270,10 +336,10 @@ fun EditorScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    EditorAction(Icons.Default.RotateLeft, "Left") {
+                    EditorAction(Icons.AutoMirrored.Filled.RotateLeft, "Left") {
                         processCurrent { ImageEnhancer.rotate(it, -90f) }
                     }
-                    EditorAction(Icons.Default.RotateRight, "Right") {
+                    EditorAction(Icons.AutoMirrored.Filled.RotateRight, "Right") {
                         processCurrent { ImageEnhancer.rotate(it, 90f) }
                     }
                     EditorAction(Icons.Default.Crop, "Corners") {

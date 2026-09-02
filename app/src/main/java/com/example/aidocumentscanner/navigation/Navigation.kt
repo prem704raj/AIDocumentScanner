@@ -2,6 +2,7 @@ package com.example.aidocumentscanner.navigation
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +27,8 @@ import com.example.aidocumentscanner.ui.screens.PdfToolsScreen
 import com.example.aidocumentscanner.ui.screens.PdfViewerScreen
 import com.example.aidocumentscanner.ui.screens.SearchScreen
 import com.example.aidocumentscanner.ui.screens.SettingsScreen
+import com.example.aidocumentscanner.ui.screens.StudentHubScreen
+import com.example.aidocumentscanner.ui.screens.StudentSubjectScreen
 import com.example.aidocumentscanner.ui.theme.ThemeMode
 
 sealed class Screen(val route: String) {
@@ -44,6 +47,12 @@ sealed class Screen(val route: String) {
     data object PdfTools : Screen("pdf_tools")
     data object Search : Screen("search")
 
+    data object StudentHub : Screen("student_hub")
+
+    data object StudentSubject : Screen("student_subject/{folderId}") {
+        fun createRoute(folderId: Long): String = "student_subject/$folderId"
+    }
+
     data object OcrText : Screen("ocr_text/{documentId}") {
         fun createRoute(documentId: Long): String = "ocr_text/$documentId"
     }
@@ -61,7 +70,7 @@ sealed class Screen(val route: String) {
     data object ExternalPdfViewer : Screen("external_pdf_viewer")
 }
 
-@androidx.compose.material3.ExperimentalMaterial3Api
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppNavigation(
     navController: NavHostController,
@@ -112,6 +121,9 @@ fun AppNavigation(
                 },
                 onSearchClick = {
                     navController.navigate(Screen.Search.route)
+                },
+                onStudentClick = {
+                    navController.navigate(Screen.StudentHub.route)
                 }
             )
         }
@@ -211,6 +223,46 @@ fun AppNavigation(
                     )
                 },
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.StudentHub.route) {
+            StudentHubScreen(
+                onBack = { navController.popBackStack() },
+                onStartScan = {
+                    navController.navigate(Screen.Camera.route)
+                },
+                onOpenSubject = { folderId ->
+                    navController.navigate(
+                        Screen.StudentSubject.createRoute(folderId)
+                    )
+                }
+            )
+        }
+
+        composable(
+            route = Screen.StudentSubject.route,
+            arguments = listOf(
+                navArgument("folderId") { type = NavType.LongType }
+            )
+        ) { entry ->
+            val folderId = entry.arguments?.getLong("folderId") ?: 0L
+            StudentSubjectScreen(
+                folderId = folderId,
+                onBack = { navController.popBackStack() },
+                onStartScan = {
+                    navController.navigate(Screen.Camera.route)
+                },
+                onOpenDocument = { documentId ->
+                    navController.navigate(
+                        Screen.PdfViewer.createRoute(documentId)
+                    )
+                },
+                onOpenOcrText = { documentId ->
+                    navController.navigate(
+                        Screen.OcrText.createRoute(documentId)
+                    )
+                }
             )
         }
 

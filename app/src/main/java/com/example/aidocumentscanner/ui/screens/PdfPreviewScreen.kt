@@ -2,31 +2,67 @@ package com.example.aidocumentscanner.ui.screens
 
 import android.graphics.Bitmap
 import android.widget.Toast
-import androidx.compose.animation.*
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.pdf.PdfGenerator
+import com.example.aidocumentscanner.scanner.StudentModeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,257 +79,295 @@ fun PdfPreviewScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { DocumentRepository(context) }
-    
-    var documentName by remember { mutableStateOf("Scan_${System.currentTimeMillis() / 1000}") }
+    val studentSettings by StudentModeManager.getSettings(context)
+        .collectAsState(
+            initial = StudentModeManager.StudentModeSettings()
+        )
+
+    var documentName by remember { mutableStateOf("Scan") }
+    var nameEditedManually by remember { mutableStateOf(false) }
     var showNameDialog by remember { mutableStateOf(false) }
-    var isSaving by remember { mutableStateOf(false) }
-    var savingMessage by remember { mutableStateOf("Saving...") }
-    var selectedPageSize by remember { mutableStateOf(PdfGenerator.PageSizeType.A4) }
-    var selectedQuality by remember { mutableStateOf(PdfGenerator.QualityType.HIGH) }
-    var showSettingsSheet by remember { mutableStateOf(false) }
-    var estimatedSize by remember { mutableStateOf("") }
-    
-    // Drag reorder state
-    var draggedItemIndex by remember { mutableStateOf(-1) }
-    var dragOffset by remember { mutableStateOf(0f) }
-    var itemPositions by remember { mutableStateOf(mutableMapOf<Int, Float>()) }
-    
-    // Calculate estimated file size
-    LaunchedEffect(pages, selectedQuality) {
-        val avgPageSize = when (selectedQuality) {
-            PdfGenerator.QualityType.STANDARD -> 1.5
-            PdfGenerator.QualityType.HIGH -> 3.0
-            PdfGenerator.QualityType.ULTRA -> 6.0
-        }
-        val totalMB = pages.size * avgPageSize
-        estimatedSize = if (totalMB < 1) {
-            "${(totalMB * 1024).toInt()} KB"
-        } else {
-            String.format("%.1f MB", totalMB)
+    var showSettings by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+
+    var pageSize by remember {
+        mutableStateOf(PdfGenerator.PageSizeType.A4)
+    }
+    var quality by remember {
+        mutableStateOf(PdfGenerator.QualityType.HIGH)
+    }
+
+    LaunchedEffect(studentSettings) {
+        if (studentSettings.enabled) {
+            pageSize = when (studentSettings.preset.recommendedPageSize) {
+                "FIT_IMAGE" -> PdfGenerator.PageSizeType.FIT_IMAGE
+                "LETTER" -> PdfGenerator.PageSizeType.LETTER
+                "LEGAL" -> PdfGenerator.PageSizeType.LEGAL
+                else -> PdfGenerator.PageSizeType.A4
+            }
+            quality = when (studentSettings.preset.recommendedQuality) {
+                "STANDARD" -> PdfGenerator.QualityType.STANDARD
+                "ULTRA" -> PdfGenerator.QualityType.ULTRA
+                else -> PdfGenerator.QualityType.HIGH
+            }
+
+            if (studentSettings.autoFilename && !nameEditedManually) {
+                documentName = StudentModeManager.generateFilename(
+                    studentSettings
+                )
+            }
+        } else if (!nameEditedManually && documentName == "Scan") {
+            documentName = "Scan_${System.currentTimeMillis() / 1000}"
         }
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Column {
                         Text("Create PDF", fontWeight = FontWeight.Bold)
                         Text(
-                            "${pages.size} page${if (pages.size > 1) "s" else ""} • ~$estimatedSize",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "${pages.size} page${if (pages.size == 1) "" else "s"}",
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showSettingsSheet = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    IconButton(
+                        onClick = { showSettings = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "PDF settings"
+                        )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                }
             )
         },
         bottomBar = {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shadowElevation = 16.dp,
-                color = MaterialTheme.colorScheme.surface
+                shadowElevation = 8.dp
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Quality summary chips
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AssistChip(
-                            onClick = { showSettingsSheet = true },
-                            label = { Text("PDF") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.PictureAsPdf,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                            onClick = { showSettings = true },
+                            label = { Text(pageSize.name) }
                         )
                         AssistChip(
-                            onClick = { showSettingsSheet = true },
-                            label = { Text(selectedPageSize.name) },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.AspectRatio,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        )
-                        AssistChip(
-                            onClick = { showSettingsSheet = true },
-                            label = { Text(selectedQuality.label.split(" ")[0]) },
-                            leadingIcon = {
-                                Icon(
-                                    when (selectedQuality) {
-                                        PdfGenerator.QualityType.STANDARD -> Icons.Default.Sd
-                                        PdfGenerator.QualityType.HIGH -> Icons.Default.Hd
-                                        PdfGenerator.QualityType.ULTRA -> Icons.Default.HighQuality
-                                    },
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                            onClick = { showSettings = true },
+                            label = { Text(quality.name.lowercase().replaceFirstChar { it.uppercase() }) }
                         )
                     }
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Save button
+
+                    if (studentSettings.enabled) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.School,
+                                    contentDescription = null
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        studentSettings.preset.label,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        studentSettings.selectedSubjectName.ifBlank {
+                                            "No subject selected"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Button(
-                        onClick = { showNameDialog = true },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
-                        enabled = pages.isNotEmpty() && !isSaving,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
+                            .height(54.dp),
+                        enabled = pages.isNotEmpty() && !saving,
+                        onClick = { showNameDialog = true }
                     ) {
-                        if (isSaving) {
+                        if (saving) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 3.dp
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(savingMessage, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Saving…")
                         } else {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = null)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                "Save as PDF",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium
+                            Icon(
+                                Icons.Default.PictureAsPdf,
+                                contentDescription = null
                             )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Save PDF")
                         }
                     }
                 }
             }
         }
-    ) { paddingValues ->
+    ) { padding ->
         if (pages.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
+                    .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp)
-                ) {
-                    Icon(
-                        Icons.Default.DocumentScanner,
-                        contentDescription = null,
-                        modifier = Modifier.size(80.dp),
-                        tint = MaterialTheme.colorScheme.outline
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        text = "No Pages Yet",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Add pages to create your PDF",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    FilledTonalButton(
-                        onClick = onAddMore,
-                        modifier = Modifier.height(48.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Add Pages")
-                    }
+                Button(onClick = onAddMore) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add pages")
                 }
             }
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
+                    .padding(padding),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                itemsIndexed(pages) { index, page ->
-                    ReorderablePageCard(
-                        bitmap = page,
-                        pageNumber = index + 1,
-                        totalPages = pages.size,
-                        index = index,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < pages.size - 1,
-                        onMoveUp = { onReorderPages(index, index - 1) },
-                        onMoveDown = { onReorderPages(index, index + 1) }
-                    )
+                itemsIndexed(pages) { index, bitmap ->
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Page ${index + 1}",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(
+                                        bitmap.width.toFloat() /
+                                            bitmap.height.toFloat()
+                                    ),
+                                contentScale = ContentScale.Fit
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Page ${index + 1}",
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                TextButton(
+                                    enabled = index > 0,
+                                    onClick = {
+                                        onReorderPages(index, index - 1)
+                                    }
+                                ) { Text("Up") }
+                                TextButton(
+                                    enabled = index < pages.lastIndex,
+                                    onClick = {
+                                        onReorderPages(index, index + 1)
+                                    }
+                                ) { Text("Down") }
+                            }
+                        }
+                    }
                 }
-                
+
                 item {
-                    AddMoreCard(onClick = onAddMore)
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onAddMore
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add more pages")
+                    }
                 }
             }
         }
     }
-    
-    // Name dialog
+
     if (showNameDialog) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
-            icon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null) },
-            title = { Text("Name Your PDF") },
+            title = { Text("Name PDF") },
             text = {
-                OutlinedTextField(
-                    value = documentName,
-                    onValueChange = { documentName = it },
-                    label = { Text("Document name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
+                Column {
+                    OutlinedTextField(
+                        value = documentName,
+                        onValueChange = {
+                            documentName = it.take(100)
+                            nameEditedManually = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Document name") },
+                        singleLine = true
+                    )
+                    if (studentSettings.enabled) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Study metadata: ${studentSettings.preset.label}" +
+                                if (studentSettings.selectedSubjectName.isNotBlank()) {
+                                    " • ${studentSettings.selectedSubjectName}"
+                                } else {
+                                    ""
+                                },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
+                    enabled = documentName.isNotBlank() && !saving,
                     onClick = {
                         showNameDialog = false
-                        isSaving = true
-                        savingMessage = "Creating PDF..."
-                        
+                        saving = true
+
                         scope.launch {
                             try {
+                                val safeName = documentName.trim()
                                 val pdfPath = withContext(Dispatchers.IO) {
                                     PdfGenerator.generatePdf(
                                         context = context,
                                         images = pages,
-                                        fileName = documentName,
-                                        pageSize = selectedPageSize,
-                                        quality = selectedQuality
+                                        fileName = safeName,
+                                        pageSize = pageSize,
+                                        quality = quality
                                     )
                                 }
-                                
+
                                 val thumbnailPath = withContext(Dispatchers.IO) {
                                     pages.firstOrNull()?.let { firstPage ->
                                         PdfGenerator.generateThumbnail(
@@ -303,337 +377,139 @@ fun PdfPreviewScreen(
                                         )
                                     }
                                 }
-                                
+
                                 val document = Document(
-                                    name = documentName,
+                                    name = safeName,
                                     pdfPath = pdfPath,
                                     thumbnailPath = thumbnailPath,
                                     pageCount = pages.size,
-                                    size = PdfGenerator.getFileSize(pdfPath)
+                                    size = PdfGenerator.getFileSize(pdfPath),
+                                    folderId = if (studentSettings.enabled) {
+                                        studentSettings.selectedSubjectId
+                                    } else {
+                                        null
+                                    },
+                                    documentType = StudentModeManager.documentType(
+                                        studentSettings
+                                    )
                                 )
-                                
-                                val docId = withContext(Dispatchers.IO) {
-                                    repository.insertDocument(document)
+
+                                val id = withContext(Dispatchers.IO) {
+                                    repository.insertDocument(document).also {
+                                        document.folderId?.let { folderId ->
+                                            repository.updateFolderCount(folderId)
+                                        }
+                                    }
                                 }
-                                
-                                val formattedSize = PdfGenerator.formatFileSize(document.size)
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(
-                                        context,
-                                        "PDF saved! ($formattedSize)",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                    onSave(docId)
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(
-                                        context,
-                                        "Failed to save: ${e.message}",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
+
+                                Toast.makeText(
+                                    context,
+                                    "PDF saved",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                onSave(id)
+                            } catch (error: Throwable) {
+                                Toast.makeText(
+                                    context,
+                                    error.message ?: "Could not save PDF",
+                                    Toast.LENGTH_LONG
+                                ).show()
                             } finally {
-                                isSaving = false
+                                saving = false
                             }
                         }
-                    },
-                    enabled = documentName.isNotBlank()
-                ) {
-                    Text("Save")
-                }
+                    }
+                ) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { showNameDialog = false }) {
-                    Text("Cancel")
-                }
+                TextButton(
+                    onClick = { showNameDialog = false }
+                ) { Text("Cancel") }
             }
         )
     }
-    
-    // Settings bottom sheet
-    if (showSettingsSheet) {
+
+    if (showSettings) {
         ModalBottomSheet(
-            onDismissRequest = { showSettingsSheet = false }
+            onDismissRequest = { showSettings = false }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 32.dp)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    "PDF Settings",
+                    "PDF settings",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                // Page Size
+
                 Text(
-                    "Page Size",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                    "Page size",
+                    fontWeight = FontWeight.SemiBold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    PdfGenerator.PageSizeType.entries.forEach { size ->
+                    PdfGenerator.PageSizeType.entries.forEach { option ->
                         FilterChip(
-                            selected = selectedPageSize == size,
-                            onClick = { selectedPageSize = size },
-                            label = { Text(size.name) }
+                            selected = pageSize == option,
+                            onClick = { pageSize = option },
+                            label = { Text(option.name) }
                         )
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                // Quality
+
                 Text(
-                    "Image Quality",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                    "Quality",
+                    fontWeight = FontWeight.SemiBold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    PdfGenerator.QualityType.entries.forEach { quality ->
+                    PdfGenerator.QualityType.entries.forEach { option ->
                         Card(
-                            onClick = { selectedQuality = quality },
+                            onClick = { quality = option },
                             colors = CardDefaults.cardColors(
-                                containerColor = if (selectedQuality == quality)
+                                containerColor = if (quality == option) {
                                     MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceContainerHigh
-                            ),
-                            shape = RoundedCornerShape(12.dp)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                }
+                            )
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                    .padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Icon(
-                                        when (quality) {
-                                            PdfGenerator.QualityType.STANDARD -> Icons.Default.Sd
-                                            PdfGenerator.QualityType.HIGH -> Icons.Default.Hd
-                                            PdfGenerator.QualityType.ULTRA -> Icons.Default.HighQuality
-                                        },
-                                        contentDescription = null,
-                                        tint = if (selectedQuality == quality)
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                Column(Modifier.weight(1f)) {
+                                    Text(option.label)
+                                    Text(
+                                        "${option.maxDimension}px maximum image dimension",
+                                        style = MaterialTheme.typography.bodySmall
                                     )
-                                    Column {
-                                        Text(
-                                            quality.label,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            "~${quality.maxDimension}px max",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
                                 }
-                                if (selectedQuality == quality) {
+                                if (quality == option) {
                                     Icon(
                                         Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                                        contentDescription = "Selected"
                                     )
                                 }
                             }
                         }
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
+
                 Button(
-                    onClick = { showSettingsSheet = false },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showSettings = false }
                 ) {
                     Text("Done")
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReorderablePageCard(
-    bitmap: Bitmap,
-    pageNumber: Int,
-    totalPages: Int,
-    index: Int,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(8.dp, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min)
-        ) {
-            // Thumbnail
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .aspectRatio(0.75f)
-            ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Page $pageNumber",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-                
-                // Gradient overlay at bottom
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                                )
-                            )
-                        )
-                )
-                
-                // Page number badge
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(12.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        text = "$pageNumber/$totalPages",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-            }
-            
-            // Reorder controls
-            Column(
-                modifier = Modifier
-                    .width(48.dp)
-                    .fillMaxHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                IconButton(
-                    onClick = onMoveUp,
-                    enabled = canMoveUp,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowUp,
-                        contentDescription = "Move up",
-                        tint = if (canMoveUp) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.outline
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                // Drag handle indicator
-                Icon(
-                    Icons.Default.DragHandle,
-                    contentDescription = "Drag to reorder",
-                    tint = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                IconButton(
-                    onClick = onMoveDown,
-                    enabled = canMoveDown,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Move down",
-                        tint = if (canMoveDown) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.outline
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AddMoreCard(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.aspectRatio(0.75f),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(
-            width = 2.dp,
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    MaterialTheme.colorScheme.primary,
-                    MaterialTheme.colorScheme.tertiary
-                )
-            )
-        )
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(56.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "Add more pages",
-                        modifier = Modifier.padding(14.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Add More",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

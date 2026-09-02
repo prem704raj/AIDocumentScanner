@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -67,6 +70,7 @@ import coil.request.ImageRequest
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.pdf.PdfGenerator
+import com.example.aidocumentscanner.scanner.StudentModeManager
 import com.example.aidocumentscanner.util.BitmapLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,11 +90,15 @@ fun HomeScreen(
     onImagesSelected: (List<Bitmap>) -> Unit,
     onOptimizeClick: () -> Unit = {},
     onDevicePdfsClick: () -> Unit = {},
-    onSearchClick: () -> Unit = {}
+    onSearchClick: () -> Unit = {},
+    onStudentClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DocumentRepository(context) }
     val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
+    val studentSettings by StudentModeManager.getSettings(context).collectAsState(
+        initial = StudentModeManager.StudentModeSettings()
+    )
     val scope = rememberCoroutineScope()
     var importing by remember { mutableStateOf(false) }
 
@@ -227,6 +235,62 @@ fun HomeScreen(
                             subtitle = "Safe PDF cleanup",
                             onClick = onOptimizeClick
                         )
+                    }
+                }
+
+                item {
+                    Card(
+                        onClick = onStudentClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (studentSettings.enabled) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.School,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(30.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Study mode",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    if (studentSettings.enabled) {
+                                        buildString {
+                                            append(studentSettings.preset.label)
+                                            if (studentSettings.selectedSubjectName.isNotBlank()) {
+                                                append(" • ")
+                                                append(studentSettings.selectedSubjectName)
+                                            }
+                                        }
+                                    } else {
+                                        "Subject folders, study presets and automatic naming"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                if (studentSettings.enabled) "On" else "Set up",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
 
