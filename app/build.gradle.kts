@@ -186,6 +186,7 @@ dependencies {
     implementation(libs.opencv)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.datastore.preferences)
+    implementation(libs.play.billing)
 
     // ---------------------------
     // Local/JVM tests

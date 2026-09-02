@@ -11,12 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
@@ -28,6 +27,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.BuildConfig
+import com.example.aidocumentscanner.DocuScanApplication
+import com.example.aidocumentscanner.billing.MonetizationConfig
 import com.example.aidocumentscanner.ui.theme.ThemeMode
 
 enum class StorageLocation(
@@ -148,9 +151,12 @@ fun SettingsScreen(
     currentThemeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBack: () -> Unit,
-    onPrivacyClick: () -> Unit = {}
+    onPrivacyClick: () -> Unit = {},
+    onProClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val app = context.applicationContext as DocuScanApplication
+    val billingState by app.container.billingManager.state.collectAsState()
     var storage by remember {
         mutableStateOf(SettingsPreferences.getStorageLocation(context))
     }
@@ -166,9 +172,10 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(
                         onClick = onBack,
-                        modifier = Modifier.size(48.dp)
+                        modifier = androidx.compose.ui.Modifier
+                            .height(48.dp)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -180,6 +187,28 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
+            if (MonetizationConfig.ENABLED || billingState.isPro) {
+                SettingsSection("DocuScan Pro") {
+                    SettingsRow(
+                        title = if (billingState.isPro) "Lifetime Pro active" else "Unlock DocuScan Pro",
+                        subtitle = if (billingState.isPro) {
+                            "Advanced PDF editing is unlocked"
+                        } else {
+                            buildString {
+                                append("One-time advanced PDF tools")
+                                billingState.formattedPrice?.let {
+                                    append(" • ")
+                                    append(it)
+                                }
+                            }
+                        },
+                        icon = Icons.Default.WorkspacePremium,
+                        onClick = onProClick
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
             SettingsSection("Storage") {
                 SettingsRow(
                     title = "Save location",

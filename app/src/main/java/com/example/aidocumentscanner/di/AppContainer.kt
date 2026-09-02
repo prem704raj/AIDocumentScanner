@@ -1,6 +1,8 @@
 package com.example.aidocumentscanner.di
 
 import android.content.Context
+import com.example.aidocumentscanner.billing.EntitlementStore
+import com.example.aidocumentscanner.billing.PlayBillingManager
 import com.example.aidocumentscanner.data.AppDatabase
 import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.domain.search.SearchDocumentsUseCase
@@ -31,6 +33,17 @@ class AppContainer(context: Context) {
 
     val documentFileStore: DocumentFileStore by lazy {
         DocumentFileStore()
+    }
+
+    val entitlementStore: EntitlementStore by lazy {
+        EntitlementStore(appContext)
+    }
+
+    val billingManager: PlayBillingManager by lazy {
+        PlayBillingManager(
+            context = appContext,
+            entitlementStore = entitlementStore
+        )
     }
 
     val searchDocumentsUseCase: SearchDocumentsUseCase by lazy {

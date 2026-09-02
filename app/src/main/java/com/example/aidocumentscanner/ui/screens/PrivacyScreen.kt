@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -63,8 +64,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.aidocumentscanner.pdf.PdfGenerator
 import com.example.aidocumentscanner.R
+import com.example.aidocumentscanner.pdf.PdfGenerator
 import com.example.aidocumentscanner.privacy.PrivacyDataManager
 import com.example.aidocumentscanner.util.CrashReporter
 import kotlinx.coroutines.launch
@@ -148,6 +149,14 @@ fun PrivacyScreen(
                             "Internet permission",
                             "Not requested",
                             "The production manifest does not request INTERNET. Core scanning, PDF operations and bundled OCR are designed to run on-device."
+                        )
+                    }
+                    item {
+                        PrivacyFact(
+                            Icons.Default.Payments,
+                            "Optional Google Play purchase",
+                            "Google Play handles payment",
+                            "If Lifetime Pro is enabled and you choose to buy it, Google Play handles the payment flow. DocuScan receives purchase status needed to unlock Pro but not your card number or payment credentials. The current client-only design does not upload purchase tokens to a DocuScan server."
                         )
                     }
                     item {

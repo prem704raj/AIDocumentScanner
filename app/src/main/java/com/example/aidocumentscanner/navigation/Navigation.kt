@@ -2,7 +2,6 @@ package com.example.aidocumentscanner.navigation
 
 import android.graphics.Bitmap
 import android.net.Uri
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +25,7 @@ import com.example.aidocumentscanner.ui.screens.PdfPreviewScreen
 import com.example.aidocumentscanner.ui.screens.PdfToolsScreen
 import com.example.aidocumentscanner.ui.screens.PdfViewerScreen
 import com.example.aidocumentscanner.ui.screens.PrivacyScreen
+import com.example.aidocumentscanner.ui.screens.ProScreen
 import com.example.aidocumentscanner.ui.screens.SearchScreen
 import com.example.aidocumentscanner.ui.screens.SettingsScreen
 import com.example.aidocumentscanner.ui.screens.StudentHubScreen
@@ -40,6 +40,7 @@ sealed class Screen(val route: String) {
     data object Documents : Screen("documents")
     data object Settings : Screen("settings")
     data object Privacy : Screen("privacy")
+    data object Pro : Screen("pro")
 
     data object PdfViewer : Screen("pdf_viewer/{documentId}?page={page}") {
         fun createRoute(documentId: Long, page: Int = 0): String =
@@ -72,7 +73,7 @@ sealed class Screen(val route: String) {
     data object ExternalPdfViewer : Screen("external_pdf_viewer")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
 fun AppNavigation(
     navController: NavHostController,
@@ -275,7 +276,16 @@ fun AppNavigation(
                 onThemeModeChange = onThemeModeChange,
                 onPrivacyClick = {
                     navController.navigate(Screen.Privacy.route)
+                },
+                onProClick = {
+                    navController.navigate(Screen.Pro.route)
                 }
+            )
+        }
+
+        composable(Screen.Pro.route) {
+            ProScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -332,6 +342,9 @@ fun AppNavigation(
                         onAddPages(bitmaps)
                         navController.navigate(Screen.Editor.route)
                     }
+                },
+                onUpgradeToPro = {
+                    navController.navigate(Screen.Pro.route)
                 }
             )
         }

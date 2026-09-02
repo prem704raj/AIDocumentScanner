@@ -22,7 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Compress
@@ -40,11 +40,13 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -52,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -65,10 +68,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.example.aidocumentscanner.DocuScanApplication
+import com.example.aidocumentscanner.billing.MonetizationConfig
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.pdf.PageSpecParser
@@ -109,9 +113,12 @@ fun PdfToolsScreen(
     onBack: () -> Unit,
     onDocumentCreated: (Long) -> Unit,
     onOptimizeRequested: (Long?) -> Unit,
-    onImagesToPdfRequested: (List<Bitmap>) -> Unit
+    onImagesToPdfRequested: (List<Bitmap>) -> Unit,
+    onUpgradeToPro: () -> Unit
 ) {
     val context = LocalContext.current
+    val app = context.applicationContext as DocuScanApplication
+    val billingState by app.container.billingManager.state.collectAsState()
     val repository = remember { DocumentRepository(context) }
     val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -132,19 +139,25 @@ fun PdfToolsScreen(
     var renameText by remember { mutableStateOf("") }
     var rotation by remember { mutableIntStateOf(90) }
     var processing by remember { mutableStateOf(false) }
+    var externalPageCount by remember { mutableIntStateOf(0) }
 
-    val currentSourcePageCount = selectedDocument?.pageCount ?: remember(externalSelection?.info?.uri) {
-        externalSelection?.let { selection ->
-            var temp: File? = null
-            try {
-                temp = PdfToolFileManager.copyToToolCache(context, selection.info)
-                PdfEditor.getPageCount(temp.absolutePath)
-            } catch (_: Throwable) {
-                0
-            } finally {
-                PdfToolFileManager.cleanup(temp)
+    LaunchedEffect(externalSelection) {
+        val selection = externalSelection
+        if (selection != null) {
+            withContext(Dispatchers.IO) {
+                var temp: File? = null
+                try {
+                    temp = PdfToolFileManager.copyToToolCache(context, selection.info)
+                    externalPageCount = PdfEditor.getPageCount(temp.absolutePath)
+                } catch (_: Throwable) {
+                    externalPageCount = 0
+                } finally {
+                    PdfToolFileManager.cleanup(temp)
+                }
             }
-        } ?: 0
+        } else {
+            externalPageCount = 0
+        }
     }
 
     fun resetWorkspace() {
@@ -285,7 +298,7 @@ fun PdfToolsScreen(
                             }
                         }
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -303,18 +316,27 @@ fun PdfToolsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(Phase4PdfTool.entries) { tool ->
+                        val premium =
+                            MonetizationConfig.isPremiumPdfTool(tool.name)
+
                         PdfToolCard(
                             tool = tool,
+                            premium = premium,
+                            proOwned = billingState.isPro,
                             onClick = {
-                                resetWorkspace()
-                                if (tool == Phase4PdfTool.IMAGES_TO_PDF) {
-                                    imagesPicker.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
+                                if (premium && !billingState.isPro) {
+                                    onUpgradeToPro()
                                 } else {
-                                    selectedTool = tool
+                                    resetWorkspace()
+                                    if (tool == Phase4PdfTool.IMAGES_TO_PDF) {
+                                        imagesPicker.launch(
+                                            PickVisualMediaRequest(
+                                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                                            )
+                                        )
+                                    } else {
+                                        selectedTool = tool
+                                    }
                                 }
                             }
                         )
@@ -479,7 +501,7 @@ fun PdfToolsScreen(
                                 )
                             }
 
-                            val pageCount = currentSourcePageCount
+                            val pageCount = selectedDocument?.pageCount ?: externalPageCount
 
                             when (tool) {
                                 Phase4PdfTool.SPLIT -> {
@@ -886,6 +908,8 @@ fun PdfToolsScreen(
 @Composable
 private fun PdfToolCard(
     tool: Phase4PdfTool,
+    premium: Boolean,
+    proOwned: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
@@ -899,14 +923,34 @@ private fun PdfToolCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(tool.icon, contentDescription = null, modifier = Modifier.size(30.dp))
+            Icon(
+                tool.icon,
+                contentDescription = null,
+                modifier = Modifier.size(30.dp)
+            )
             Spacer(Modifier.size(14.dp))
-            Column {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(tool.title, fontWeight = FontWeight.SemiBold)
                 Text(
                     tool.subtitle,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+            if (premium) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        if (proOwned) "PRO" else "PRO • LOCKED",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }

@@ -30,6 +30,8 @@ CREATE AND MANAGE PDFs
 • Protect supported PDFs with a password
 • Use safe PDF optimization without fake size guarantees
 
+Some advanced PDF editing tools—Merge, Split, editing pages inside existing PDFs, Watermark, and Password protection—can be unlocked with an optional one-time Lifetime Pro purchase. Scanning, Study Mode, OCR/search, PDF creation/viewing/sharing, Images to PDF, PDF to images, Rename, and safe Optimize remain free.
+
 SEARCH INSIDE DOCUMENTS
 • Run bundled OCR locally on supported document pages
 • Save OCR text for faster searches after restart

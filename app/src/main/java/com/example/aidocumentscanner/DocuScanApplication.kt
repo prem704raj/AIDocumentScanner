@@ -17,6 +17,9 @@ class DocuScanApplication : Application() {
         }
 
         container = AppContainer(this)
+
+        // No-op until MonetizationConfig.ENABLED is deliberately activated.
+        container.billingManager.start()
     }
 
     /**

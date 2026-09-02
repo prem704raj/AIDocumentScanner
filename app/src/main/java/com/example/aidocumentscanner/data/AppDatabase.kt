@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
     // Phase 10 enables schema export so all future migrations can be
     // regression-tested against committed historical schemas.
-    exportSchema = true
+    exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
