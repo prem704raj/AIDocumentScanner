@@ -20,3 +20,14 @@ build_log*.txt
 
 # IDE
 .idea/
+
+# Release/upload signing secrets — NEVER COMMIT
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# Local Play inspection output
+play-release-local/
+dependencies.txt

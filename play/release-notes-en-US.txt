@@ -1,0 +1,9 @@
+<en-US>
+Initial DocuScan release.
+
+• Multi-page document scanning and page cleanup
+• PDF merge, split, reorder, rotate, watermark and optimization tools
+• Persistent on-device OCR search with exact-page results
+• Study Mode with subject folders and scan presets
+• Privacy dashboard with local-data and deletion controls
+</en-US>

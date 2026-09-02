@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.DeleteForever
@@ -64,6 +64,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.aidocumentscanner.pdf.PdfGenerator
+import com.example.aidocumentscanner.R
 import com.example.aidocumentscanner.privacy.PrivacyDataManager
 import com.example.aidocumentscanner.util.CrashReporter
 import kotlinx.coroutines.launch
@@ -107,7 +108,7 @@ fun PrivacyScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -232,6 +233,34 @@ fun PrivacyScreen(
 
                     item { SectionTitle("In-app privacy notice", "Plain-language behavior of this build.") }
                     item { PrivacyNotice() }
+
+                    item {
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse(
+                                                context.getString(
+                                                    R.string.privacy_policy_url
+                                                )
+                                            )
+                                        )
+                                    )
+                                }.onFailure {
+                                    scope.launch {
+                                        snackbar.showSnackbar(
+                                            "Could not open privacy policy"
+                                        )
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("Open full privacy policy")
+                        }
+                    }
 
                     item { SectionTitle("Erase data", "Destructive and cannot be undone.") }
                     item {

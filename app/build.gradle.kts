@@ -1,9 +1,23 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+val uploadKeystorePropertiesFile =
+    rootProject.file("keystore.properties")
+
+val uploadKeystoreProperties =
+    Properties().apply {
+        if (uploadKeystorePropertiesFile.isFile) {
+            uploadKeystorePropertiesFile
+                .inputStream()
+                .use(::load)
+        }
+    }
 
 android {
     namespace = "com.example.aidocumentscanner"
@@ -20,12 +34,53 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (uploadKeystorePropertiesFile.isFile) {
+            create("uploadRelease") {
+                storeFile = rootProject.file(
+                    requireNotNull(
+                        uploadKeystoreProperties
+                            .getProperty("storeFile")
+                    ) {
+                        "keystore.properties: storeFile is missing"
+                    }
+                )
+                storePassword =
+                    requireNotNull(
+                        uploadKeystoreProperties
+                            .getProperty("storePassword")
+                    ) {
+                        "keystore.properties: storePassword is missing"
+                    }
+                keyAlias =
+                    requireNotNull(
+                        uploadKeystoreProperties
+                            .getProperty("keyAlias")
+                    ) {
+                        "keystore.properties: keyAlias is missing"
+                    }
+                keyPassword =
+                    requireNotNull(
+                        uploadKeystoreProperties
+                            .getProperty("keyPassword")
+                    ) {
+                        "keystore.properties: keyPassword is missing"
+                    }
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
         }
 
         release {
+            if (uploadKeystorePropertiesFile.isFile) {
+                signingConfig =
+                    signingConfigs
+                        .getByName("uploadRelease")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

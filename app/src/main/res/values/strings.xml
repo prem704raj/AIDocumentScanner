@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">DocuScan</string>
+
+    <!--
+      Release gate:
+      enable GitHub Pages from /docs and verify this exact URL publicly
+      before Google Play submission.
+    -->
+    <string
+        name="privacy_policy_url"
+        translatable="false">https://prem704raj.github.io/AIDocumentScanner/privacy-policy.html</string>
 </resources>

@@ -1,0 +1,53 @@
+DOCUSCAN — GOOGLE PLAY MAIN STORE LISTING
+Locale: en-US / English
+Prepared: 2026-09-02
+
+APP NAME
+DocuScan: PDF Scanner
+
+SHORT DESCRIPTION
+Scan documents, edit PDFs, search OCR text, and organize study notes.
+
+FULL DESCRIPTION
+
+Scan documents, clean up pages, work with PDFs, and find your study material faster with DocuScan.
+
+DocuScan combines a multi-page document scanner, practical PDF tools, on-device OCR search, and student-focused organization in one Android app.
+
+SCAN DOCUMENTS
+• Capture one or many pages in a scan session
+• Automatic edge detection with confidence-based fallback
+• Manual four-corner crop when you need precise control
+• Rotate, reorder, duplicate, remove, and retake pages
+• Document, grayscale, black-and-white, and color-enhancement filters
+
+CREATE AND MANAGE PDFs
+• Turn scanned pages and imported images into PDF documents
+• Merge PDFs
+• Split pages and ranges
+• Remove, reorder, and rotate PDF pages
+• Add watermarks
+• Protect supported PDFs with a password
+• Use safe PDF optimization without fake size guarantees
+
+SEARCH INSIDE DOCUMENTS
+• Run bundled OCR locally on supported document pages
+• Save OCR text for faster searches after restart
+• Search document names and extracted text
+• Jump directly to the page containing a match
+• Copy or share extracted text when you choose
+
+BUILT FOR STUDENTS
+Study Mode helps organize scans around real coursework:
+• Create subject folders such as DBMS, DSA, Mathematics, or Physics
+• Use presets for Notes, Assignments, Lectures, Whiteboards, Books, and Question Papers
+• Apply preset-aware page enhancement
+• Generate useful subject-based filenames
+• Keep study PDFs grouped by subject
+
+PRIVACY CONTROLS
+Core scanning, PDF tools, and bundled OCR are designed to run on your device. No DocuScan account is required for core features.
+
+The Privacy & data screen explains camera access, local storage, OCR data, crash reports, public exports, sharing boundaries, and deletion controls. When you explicitly share or export a file, that copy can leave DocuScan's app-private storage.
+
+DocuScan is designed for students and anyone who needs a focused document scanner and PDF workspace without turning every scan into a cloud workflow.
