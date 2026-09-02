@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
 
     private var incomingPdfUri by mutableStateOf<Uri?>(null)
 
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

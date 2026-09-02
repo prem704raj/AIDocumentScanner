@@ -1,82 +1,144 @@
 package com.example.aidocumentscanner.ui.screens
 
 import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PersonOff
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.aidocumentscanner.BuildConfig
 import com.example.aidocumentscanner.ui.theme.ThemeMode
 
-/**
- * Storage location options for saving PDFs
- */
-enum class StorageLocation(val label: String, val description: String, val icon: ImageVector) {
-    INTERNAL("App Storage", "Private app folder (not visible in file manager)", Icons.Default.PhoneAndroid),
-    DOCUMENTS("Documents Folder", "Public Documents/AIDocumentScanner folder", Icons.Default.Folder),
-    DOWNLOADS("Downloads Folder", "Public Downloads folder", Icons.Default.Download)
+enum class StorageLocation(
+    val label: String,
+    val description: String,
+    val icon: ImageVector
+) {
+    INTERNAL(
+        "App storage",
+        "Private local storage used by DocuScan",
+        Icons.Default.PhoneAndroid
+    ),
+    DOCUMENTS(
+        "Documents folder",
+        "Also create a copy in the public Documents folder",
+        Icons.Default.Folder
+    ),
+    DOWNLOADS(
+        "Downloads folder",
+        "Also create a copy in the public Downloads folder",
+        Icons.Default.Download
+    )
 }
 
+/**
+ * Compatibility API retained for PdfGenerator and older screens.
+ *
+ * Phase 6 changes the fresh-install default to INTERNAL so the UI/privacy model matches
+ * scoped-storage behavior. Existing users keep the value already saved in preferences.
+ */
 object SettingsPreferences {
     private const val PREFS_NAME = "app_settings"
     private const val KEY_STORAGE_LOCATION = "storage_location"
     private const val KEY_DEFAULT_PAGE_SIZE = "default_page_size"
     private const val KEY_DEFAULT_QUALITY = "default_quality"
     private const val KEY_AUTO_DETECT = "auto_detect"
-    
+
     fun getStorageLocation(context: Context): StorageLocation {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val value = prefs.getString(KEY_STORAGE_LOCATION, StorageLocation.DOCUMENTS.name)
-        return try {
-            StorageLocation.valueOf(value ?: StorageLocation.DOCUMENTS.name)
-        } catch (e: Exception) {
-            StorageLocation.DOCUMENTS
-        }
+        val value = prefs.getString(
+            KEY_STORAGE_LOCATION,
+            StorageLocation.INTERNAL.name
+        )
+        return runCatching {
+            StorageLocation.valueOf(value ?: StorageLocation.INTERNAL.name)
+        }.getOrDefault(StorageLocation.INTERNAL)
     }
-    
+
     fun setStorageLocation(context: Context, location: StorageLocation) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_STORAGE_LOCATION, location.name).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_STORAGE_LOCATION, location.name)
+            .apply()
     }
-    
-    fun getDefaultPageSize(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_DEFAULT_PAGE_SIZE, "A4") ?: "A4"
-    }
-    
+
+    fun getDefaultPageSize(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_DEFAULT_PAGE_SIZE, "A4") ?: "A4"
+
     fun setDefaultPageSize(context: Context, size: String) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_DEFAULT_PAGE_SIZE, size).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DEFAULT_PAGE_SIZE, size)
+            .apply()
     }
-    
-    fun getDefaultQuality(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_DEFAULT_QUALITY, "High") ?: "High"
-    }
-    
+
+    fun getDefaultQuality(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_DEFAULT_QUALITY, "High") ?: "High"
+
     fun setDefaultQuality(context: Context, quality: String) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_DEFAULT_QUALITY, quality).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DEFAULT_QUALITY, quality)
+            .apply()
     }
-    
-    fun getAutoDetect(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getBoolean(KEY_AUTO_DETECT, true)
-    }
-    
+
+    fun getAutoDetect(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_DETECT, true)
+
     fun setAutoDetect(context: Context, enabled: Boolean) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putBoolean(KEY_AUTO_DETECT, enabled).apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUTO_DETECT, enabled)
+            .apply()
     }
 }
 
@@ -88,269 +150,212 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    
-    var defaultPageSize by remember { mutableStateOf(SettingsPreferences.getDefaultPageSize(context)) }
-    var defaultQuality by remember { mutableStateOf(SettingsPreferences.getDefaultQuality(context)) }
-    var autoDetect by remember { mutableStateOf(SettingsPreferences.getAutoDetect(context)) }
-    var storageLocation by remember { mutableStateOf(SettingsPreferences.getStorageLocation(context)) }
-    var showThemeDialog by remember { mutableStateOf(false) }
-    var showStorageDialog by remember { mutableStateOf(false) }
-    
+    var storage by remember {
+        mutableStateOf(SettingsPreferences.getStorageLocation(context))
+    }
+    var showStorage by remember { mutableStateOf(false) }
+    var showTheme by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
-                    Text("Settings", fontWeight = FontWeight.Bold) 
+                title = {
+                    Text("Settings", fontWeight = FontWeight.Bold)
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.size(48.dp)
+                    ) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
         }
-    ) { paddingValues ->
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Storage Settings Section
-            SettingsSection(title = "Storage") {
-                SettingsItem(
-                    title = "Save Location",
-                    subtitle = storageLocation.label,
-                    icon = storageLocation.icon,
-                    onClick = { showStorageDialog = true }
+            SettingsSection("Storage") {
+                SettingsRow(
+                    title = "Save location",
+                    subtitle = storage.label,
+                    icon = storage.icon,
+                    onClick = { showStorage = true }
                 )
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // PDF Settings Section
-            SettingsSection(title = "PDF Settings") {
-                SettingsDropdown(
-                    title = "Default Page Size",
-                    subtitle = defaultPageSize,
-                    options = listOf("A4", "Letter", "Legal", "Fit to Image"),
-                    onSelect = { 
-                        defaultPageSize = it
-                        SettingsPreferences.setDefaultPageSize(context, it)
-                    }
-                )
-                
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                
-                SettingsDropdown(
-                    title = "Image Quality",
-                    subtitle = defaultQuality,
-                    options = listOf("Standard", "High", "Ultra"),
-                    onSelect = { 
-                        defaultQuality = it
-                        SettingsPreferences.setDefaultQuality(context, it)
-                    }
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Scanning Settings Section
-            SettingsSection(title = "Scanning") {
-                SettingsSwitch(
-                    title = "Auto Edge Detection",
-                    subtitle = "Automatically detect document edges",
-                    checked = autoDetect,
-                    onCheckedChange = { 
-                        autoDetect = it
-                        SettingsPreferences.setAutoDetect(context, it)
-                    }
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Appearance Section
-            SettingsSection(title = "Appearance") {
-                SettingsItem(
+
+            Spacer(Modifier.height(16.dp))
+
+            SettingsSection("Appearance") {
+                SettingsRow(
                     title = "Theme",
                     subtitle = when (currentThemeMode) {
-                        ThemeMode.SYSTEM -> "System Default"
-                        ThemeMode.LIGHT -> "Light Mode"
-                        ThemeMode.DARK -> "Dark Mode"
+                        ThemeMode.SYSTEM -> "Follow system"
+                        ThemeMode.LIGHT -> "Light"
+                        ThemeMode.DARK -> "Dark"
                     },
                     icon = when (currentThemeMode) {
                         ThemeMode.SYSTEM -> Icons.Default.BrightnessAuto
                         ThemeMode.LIGHT -> Icons.Default.LightMode
                         ThemeMode.DARK -> Icons.Default.DarkMode
                     },
-                    onClick = { showThemeDialog = true }
+                    onClick = { showTheme = true }
                 )
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // About Section
-            SettingsSection(title = "About") {
-                SettingsItem(
+
+            Spacer(Modifier.height(16.dp))
+
+            SettingsSection("Privacy & processing") {
+                StaticSettingsRow(
+                    title = "On-device processing",
+                    subtitle = "Scanning, PDF tools and bundled OCR run locally on this device.",
+                    icon = Icons.Default.Lock
+                )
+                HorizontalDivider()
+                StaticSettingsRow(
+                    title = "No account required",
+                    subtitle = "DocuScan does not require sign-in to use its core features.",
+                    icon = Icons.Default.PersonOff
+                )
+                HorizontalDivider()
+                StaticSettingsRow(
+                    title = "Local app data",
+                    subtitle = "Document records and OCR text are stored in the app's local data.",
+                    icon = Icons.Default.PrivacyTip
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SettingsSection("About") {
+                StaticSettingsRow(
                     title = "Version",
-                    subtitle = "1.0.0",
-                    icon = Icons.Default.Info,
-                    onClick = { }
-                )
-                
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                
-                SettingsItem(
-                    title = "Offline Mode",
-                    subtitle = "All features work without internet",
-                    icon = Icons.Default.WifiOff,
-                    onClick = { }
+                    subtitle = BuildConfig.VERSION_NAME,
+                    icon = Icons.Default.Info
                 )
             }
-            
-            Spacer(modifier = Modifier.height(32.dp))
+
+            Spacer(Modifier.height(28.dp))
         }
     }
-    
-    // Storage location dialog
-    if (showStorageDialog) {
+
+    if (showStorage) {
         AlertDialog(
-            onDismissRequest = { showStorageDialog = false },
-            icon = { Icon(Icons.Default.Folder, contentDescription = null) },
-            title = { Text("Save Location", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { showStorage = false },
+            title = { Text("Save location") },
             text = {
-                Column {
-                    StorageLocation.entries.forEach { location ->
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val locations = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        StorageLocation.entries
+                    } else {
+                        listOf(StorageLocation.INTERNAL)
+                    }
+
+                    locations.forEach { location ->
                         Card(
                             onClick = {
-                                storageLocation = location
-                                SettingsPreferences.setStorageLocation(context, location)
-                                showStorageDialog = false
-                            },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (storageLocation == location)
-                                    MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceContainerHigh
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                Icon(
-                                    location.icon,
-                                    contentDescription = null,
-                                    tint = if (storageLocation == location)
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                storage = location
+                                SettingsPreferences.setStorageLocation(
+                                    context,
+                                    location
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        location.label,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        location.description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                if (storageLocation == location) {
+                                showStorage = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor =
+                                    if (location == storage) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                    }
+                            )
+                        ) {
+                            ListItem(
+                                headlineContent = { Text(location.label) },
+                                supportingContent = {
+                                    Text(location.description)
+                                },
+                                leadingContent = {
                                     Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
+                                        location.icon,
+                                        contentDescription = null
                                     )
+                                },
+                                trailingContent = {
+                                    if (location == storage) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "Selected"
+                                        )
+                                    }
                                 }
-                            }
+                            )
                         }
+                    }
+
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                        Text(
+                            "On Android 8–9, public-folder copies are hidden here because DocuScan no longer requests broad storage permission. Use Share/Export instead.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showStorageDialog = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { showStorage = false }) {
+                    Text("Close")
                 }
             }
         )
     }
-    
-    // Theme selection dialog
-    if (showThemeDialog) {
+
+    if (showTheme) {
         AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = { Text("Choose Theme") },
+            onDismissRequest = { showTheme = false },
+            title = { Text("Theme") },
             text = {
                 Column {
-                    ThemeOption(
-                        icon = Icons.Default.BrightnessAuto,
-                        title = "System Default",
-                        subtitle = "Follow system theme settings",
+                    ThemeChoice(
+                        label = "Follow system",
                         selected = currentThemeMode == ThemeMode.SYSTEM,
                         onClick = {
                             onThemeModeChange(ThemeMode.SYSTEM)
-                            showThemeDialog = false
+                            showTheme = false
                         }
                     )
-                    ThemeOption(
-                        icon = Icons.Default.LightMode,
-                        title = "Light Mode",
-                        subtitle = "Always use light theme",
+                    ThemeChoice(
+                        label = "Light",
                         selected = currentThemeMode == ThemeMode.LIGHT,
                         onClick = {
                             onThemeModeChange(ThemeMode.LIGHT)
-                            showThemeDialog = false
+                            showTheme = false
                         }
                     )
-                    ThemeOption(
-                        icon = Icons.Default.DarkMode,
-                        title = "Dark Mode",
-                        subtitle = "Always use dark theme",
+                    ThemeChoice(
+                        label = "Dark",
                         selected = currentThemeMode == ThemeMode.DARK,
                         onClick = {
                             onThemeModeChange(ThemeMode.DARK)
-                            showThemeDialog = false
+                            showTheme = false
                         }
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showThemeDialog = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { showTheme = false }) {
+                    Text("Close")
                 }
             }
         )
     }
-}
-
-@Composable
-private fun ThemeOption(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    ListItem(
-        headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle) },
-        leadingContent = {
-            Icon(icon, contentDescription = null)
-        },
-        trailingContent = {
-            RadioButton(
-                selected = selected,
-                onClick = onClick
-            )
-        },
-        modifier = Modifier.fillMaxWidth()
-    )
 }
 
 @Composable
@@ -360,43 +365,47 @@ private fun SettingsSection(
 ) {
     Column {
         Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
+            title,
+            modifier = Modifier.padding(
+                horizontal = 16.dp,
+                vertical = 8.dp
+            ),
             color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
         )
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-            ),
-            shape = RoundedCornerShape(16.dp)
+            )
         ) {
-            Column {
-                content()
-            }
+            Column(content = content)
         }
     }
 }
 
 @Composable
-private fun SettingsItem(
+private fun SettingsRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
     onClick: () -> Unit
 ) {
     ListItem(
-        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+        headlineContent = {
+            Text(title, fontWeight = FontWeight.Medium)
+        },
         supportingContent = { Text(subtitle) },
         leadingContent = {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        },
-        trailingContent = {
-            Icon(Icons.Default.ChevronRight, contentDescription = null)
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
         },
         modifier = Modifier
             .fillMaxWidth()
@@ -405,73 +414,40 @@ private fun SettingsItem(
 }
 
 @Composable
-private fun SettingsSwitch(
+private fun StaticSettingsRow(
     title: String,
     subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    icon: ImageVector
 ) {
     ListItem(
-        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
-        supportingContent = { Text(subtitle) },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange
-            )
+        headlineContent = {
+            Text(title, fontWeight = FontWeight.Medium)
         },
-        modifier = Modifier.fillMaxWidth()
+        supportingContent = { Text(subtitle) },
+        leadingContent = {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsDropdown(
-    title: String,
-    subtitle: String,
-    options: List<String>,
-    onSelect: (String) -> Unit
+private fun ThemeChoice(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it }
-    ) {
-        ListItem(
-            headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
-            supportingContent = { Text(subtitle) },
-            trailingContent = {
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-        )
-        
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option) },
-                    onClick = {
-                        onSelect(option)
-                        expanded = false
-                    },
-                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
-                    trailingIcon = {
-                        if (option == subtitle) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                )
-            }
-        }
-    }
+    ListItem(
+        headlineContent = { Text(label) },
+        trailingContent = {
+            RadioButton(
+                selected = selected,
+                onClick = onClick
+            )
+        },
+        modifier = Modifier.clickable(onClick = onClick)
+    )
 }

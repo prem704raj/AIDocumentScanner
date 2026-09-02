@@ -2,7 +2,6 @@ package com.example.aidocumentscanner.navigation
 
 import android.graphics.Bitmap
 import android.net.Uri
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,7 +61,7 @@ sealed class Screen(val route: String) {
     data object ExternalPdfViewer : Screen("external_pdf_viewer")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
 fun AppNavigation(
     navController: NavHostController,
@@ -203,6 +202,14 @@ fun AppNavigation(
                         Screen.PdfViewer.createRoute(documentId)
                     )
                 },
+                onSearchTextClick = {
+                    navController.navigate(Screen.Search.route)
+                },
+                onOcrTextClick = { documentId ->
+                    navController.navigate(
+                        Screen.OcrText.createRoute(documentId)
+                    )
+                },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -233,10 +240,7 @@ fun AppNavigation(
             PdfViewerScreen(
                 documentId = documentId,
                 initialPage = page,
-                onBack = { navController.popBackStack() },
-                onOcrClick = { docId ->
-                    navController.navigate(Screen.OcrText.createRoute(docId))
-                }
+                onBack = { navController.popBackStack() }
             )
         }
 

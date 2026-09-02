@@ -2,24 +2,14 @@ package com.example.aidocumentscanner.ui.screens
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOutCubic
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,23 +17,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Compress
-import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +46,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,24 +56,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
-import com.example.aidocumentscanner.ui.theme.GradientEnd
-import com.example.aidocumentscanner.ui.theme.GradientMiddle
-import com.example.aidocumentscanner.ui.theme.GradientStart
+import com.example.aidocumentscanner.pdf.PdfGenerator
 import com.example.aidocumentscanner.util.BitmapLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,37 +90,25 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val repository = remember { DocumentRepository(context) }
-    val recentDocuments by repository.getRecentDocuments(5).collectAsState(initial = emptyList())
+    val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(false) }
-
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = EaseInOutCubic),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
+    var importing by remember { mutableStateOf(false) }
 
     val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia()
+        ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
 
-        isLoading = true
+        importing = true
         scope.launch {
             val bitmaps = withContext(Dispatchers.IO) {
-                uris.mapNotNull { uri -> BitmapLoader.decode(context, uri) }
+                uris.mapNotNull { uri ->
+                    BitmapLoader.decode(context, uri)
+                }
             }
-            isLoading = false
-
+            importing = false
             if (bitmaps.isNotEmpty()) {
                 onImagesSelected(bitmaps)
-            } else {
-                Toast.makeText(context, "Could not read the selected images", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -135,249 +117,240 @@ fun HomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Column {
+                        Text(
+                            "DocuScan",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Scan, search and manage PDFs locally",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = onSearchClick,
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(36.dp)
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "Search documents"
+                        )
+                    }
+                    IconButton(
+                        onClick = onSettingsClick,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings"
+                        )
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 12.dp,
+                    bottom = 28.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    ScanHero(onScanClick = onScanClick)
+                }
+
+                item {
+                    Text(
+                        "Quick actions",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        HomeActionCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Default.PhotoLibrary,
+                            title = "Import",
+                            subtitle = "Images",
+                            onClick = {
+                                importLauncher.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                                    )
+                                )
+                            }
+                        )
+                        HomeActionCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Default.Search,
+                            title = "Search",
+                            subtitle = "OCR text",
+                            onClick = onSearchClick
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        HomeActionCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Default.Build,
+                            title = "PDF Tools",
+                            subtitle = "Merge, split & more",
+                            onClick = onPdfToolsClick
+                        )
+                        HomeActionCard(
+                            modifier = Modifier.weight(1f),
+                            icon = Icons.Default.Compress,
+                            title = "Optimize",
+                            subtitle = "Safe PDF cleanup",
+                            onClick = onOptimizeClick
+                        )
+                    }
+                }
+
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.DocumentScanner,
-                                contentDescription = null,
-                                modifier = Modifier.padding(6.dp),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Private by design",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    "Core scanning, PDF tools and bundled OCR run on your device. No account is required.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                        Column {
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                text = "DocuScan AI",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium
+                                "Your documents",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Smart Document Scanner",
+                                "${documents.size} document${if (documents.size == 1) "" else "s"}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onSearchClick) {
-                        Icon(Icons.Default.Search, contentDescription = "Search documents")
-                    }
-                    IconButton(onClick = onDevicePdfsClick) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = "Open PDFs")
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
-        }
-    ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                                    MaterialTheme.colorScheme.surface
-                                ),
-                                radius = 800f
+                        FilledTonalButton(onClick = onDocumentsClick) {
+                            Icon(
+                                Icons.Default.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
                             )
-                        ),
-                    contentAlignment = Alignment.Center
+                            Spacer(Modifier.width(6.dp))
+                            Text("View all")
+                        }
+                    }
+                }
+
+                if (documents.isEmpty()) {
+                    item {
+                        EmptyDocumentsHome(
+                            onScanClick = onScanClick,
+                            onImportClick = {
+                                importLauncher.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                                    )
+                                )
+                            }
+                        )
+                    }
+                } else {
+                    items(
+                        items = documents.take(4),
+                        key = { it.id }
+                    ) { document ->
+                        RecentDocumentCard(
+                            document = document,
+                            onClick = { onDocumentClick(document.id) }
+                        )
+                    }
+                }
+
+                item {
+                    FilledTonalButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onDevicePdfsClick
+                    ) {
+                        Icon(
+                            Icons.Default.PictureAsPdf,
+                            contentDescription = null
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open a PDF from this device")
+                    }
+                }
+            }
+
+            if (importing) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .scale(pulseScale)
-                                .size(140.dp)
-                                .shadow(
-                                    elevation = 20.dp,
-                                    shape = CircleShape,
-                                    ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                    spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                                )
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(
-                                            GradientStart,
-                                            GradientMiddle,
-                                            GradientEnd
-                                        )
-                                    )
-                                )
-                                .clickable(onClick = onScanClick),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.CameraAlt,
-                                contentDescription = "Scan",
-                                tint = Color.White,
-                                modifier = Modifier.size(56.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text(
-                            text = "Tap to Scan",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Capture documents • Convert to PDF\nAll processing done offline",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PremiumActionCard(
-                        icon = Icons.Default.CameraAlt,
-                        label = "Scan",
-                        sublabel = "Camera",
-                        gradient = listOf(GradientStart, GradientMiddle),
-                        onClick = onScanClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                    PremiumActionCard(
-                        icon = Icons.Default.PhotoLibrary,
-                        label = "Import",
-                        sublabel = "Gallery",
-                        gradient = listOf(
-                            MaterialTheme.colorScheme.tertiary,
-                            MaterialTheme.colorScheme.secondary
-                        ),
-                        onClick = {
-                            importLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    PremiumActionCard(
-                        icon = Icons.Default.Build,
-                        label = "Tools",
-                        sublabel = "Edit PDF",
-                        gradient = listOf(Color(0xFF8B5CF6), Color(0xFFA855F7)),
-                        onClick = onPdfToolsClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                    PremiumActionCard(
-                        icon = Icons.Default.FolderOpen,
-                        label = "My Files",
-                        sublabel = "${recentDocuments.size} docs",
-                        gradient = listOf(
-                            MaterialTheme.colorScheme.secondary,
-                            MaterialTheme.colorScheme.primary
-                        ),
-                        onClick = onDocumentsClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PremiumActionCard(
-                        icon = Icons.Default.Compress,
-                        label = "Optimize",
-                        sublabel = "Reduce size",
-                        gradient = listOf(Color(0xFFF59E0B), Color(0xFFFBBF24)),
-                        onClick = onOptimizeClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Spacer(modifier = Modifier.weight(1f))
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = Color(0xFF10B981),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text(
-                            "Offline processing • No account required",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            AnimatedVisibility(
-                visible = isLoading,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(48.dp),
-                            strokeWidth = 4.dp
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Loading images...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text("Preparing images…")
                     }
                 }
             }
@@ -386,66 +359,227 @@ fun HomeScreen(
 }
 
 @Composable
-private fun PremiumActionCard(
-    icon: ImageVector,
-    label: String,
-    sublabel: String,
-    gradient: List<Color>,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun ScanHero(
+    onScanClick: () -> Unit
 ) {
     Card(
-        onClick = onClick,
-        modifier = modifier.height(90.dp),
-        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.size(36.dp),
-                color = Color.Transparent
+                modifier = Modifier.size(58.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.primary
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.linearGradient(gradient),
-                            RoundedCornerShape(8.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = icon,
+                        Icons.Default.CameraAlt,
                         contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(30.dp)
                     )
                 }
             }
             Column {
                 Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
+                    "Scan a document",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Capture one or many pages, correct corners, apply document filters, then save as PDF.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Button(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                onClick = onScanClick
+            ) {
+                Icon(Icons.Default.CameraAlt, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Start scanning")
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeActionCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.height(112.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Column {
+                Text(
+                    title,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = sublabel,
+                    subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
     }
 }
+
+@Composable
+private fun RecentDocumentCard(
+    document: Document,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 58.dp, height = 72.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!document.thumbnailPath.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(document.thumbnailPath)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Preview of ${document.name}",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.PictureAsPdf,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        document.name.removeSuffix(".pdf"),
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    document.emoji?.let {
+                        Spacer(Modifier.width(6.dp))
+                        Text(it)
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${document.pageCount} page${if (document.pageCount == 1) "" else "s"} • " +
+                        PdfGenerator.formatFileSize(document.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    formatHomeDate(document.updatedAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyDocumentsHome(
+    onScanClick: () -> Unit,
+    onImportClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                Icons.Default.Description,
+                contentDescription = null,
+                modifier = Modifier.size(46.dp),
+                tint = MaterialTheme.colorScheme.outline
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "No documents yet",
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Scan your first page or import photos to create a PDF.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onScanClick) {
+                    Text("Scan")
+                }
+                FilledTonalButton(onClick = onImportClick) {
+                    Text("Import")
+                }
+            }
+        }
+    }
+}
+
+private fun formatHomeDate(timestamp: Long): String =
+    SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        .format(Date(timestamp))

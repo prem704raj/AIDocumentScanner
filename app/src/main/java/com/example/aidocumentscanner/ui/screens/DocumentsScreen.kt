@@ -2,331 +2,410 @@ package com.example.aidocumentscanner.ui.screens
 
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FindInPage
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.aidocumentscanner.data.Document
 import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.pdf.PdfGenerator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
-// Common emojis for document marking
-private val DOCUMENT_EMOJIS = listOf(
-    "⭐", "📌", "🔥", "💡", "📚", "📝", "✅", "❤️", "💼", "🎓",
-    "📊", "📈", "🏆", "⚡", "🎯", "💎", "🌟", "📋", "🔖", "💰"
-)
+private enum class DocumentSort {
+    RECENT,
+    NAME,
+    PAGES
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DocumentsScreen(
     onDocumentClick: (Long) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onSearchTextClick: () -> Unit = {},
+    onOcrTextClick: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val repository = remember { DocumentRepository(context) }
     val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
-    
-    var searchQuery by remember { mutableStateOf("") }
-    var showDeleteDialog by remember { mutableStateOf<Document?>(null) }
-    var showBottomSheet by remember { mutableStateOf<Document?>(null) }
-    var showRenameDialog by remember { mutableStateOf<Document?>(null) }
-    var showEmojiPicker by remember { mutableStateOf<Document?>(null) }
-    val sheetState = rememberModalBottomSheetState()
-    
-    val filteredDocuments = if (searchQuery.isBlank()) {
-        documents
-    } else {
-        documents.filter { it.name.contains(searchQuery, ignoreCase = true) }
+
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(DocumentSort.RECENT) }
+    var menuDocument by remember { mutableStateOf<Document?>(null) }
+    var renameDocument by remember { mutableStateOf<Document?>(null) }
+    var deleteDocument by remember { mutableStateOf<Document?>(null) }
+
+    val visible = remember(documents, query, sort) {
+        val filtered = if (query.isBlank()) {
+            documents
+        } else {
+            documents.filter {
+                it.name.contains(query, ignoreCase = true)
+            }
+        }
+
+        when (sort) {
+            DocumentSort.RECENT -> filtered.sortedByDescending { it.updatedAt }
+            DocumentSort.NAME -> filtered.sortedBy { it.name.lowercase() }
+            DocumentSort.PAGES -> filtered.sortedByDescending { it.pageCount }
+        }
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Column {
-                        Text("My Documents", fontWeight = FontWeight.Bold)
+                        Text("Documents", fontWeight = FontWeight.Bold)
                         Text(
-                            "${documents.size} document${if (documents.size != 1) "s" else ""}",
+                            "${documents.size} document${if (documents.size == 1) "" else "s"}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.size(48.dp)
+                    ) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = onSearchTextClick,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.FindInPage,
+                            contentDescription = "Search inside documents"
+                        )
                     }
                 }
             )
         }
-    ) { paddingValues ->
+    ) { padding ->
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(padding)
         ) {
-            // Search bar
             OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+                value = query,
+                onValueChange = { query = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search documents...") },
+                placeholder = { Text("Filter by document name") },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
                 trailingIcon = {
-                    if (searchQuery.isNotBlank()) {
-                        IconButton(onClick = { searchQuery = "" }) {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
+                shape = RoundedCornerShape(14.dp)
             )
-            
-            if (filteredDocuments.isEmpty()) {
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SortButton(
+                    text = "Recent",
+                    selected = sort == DocumentSort.RECENT,
+                    onClick = { sort = DocumentSort.RECENT }
+                )
+                SortButton(
+                    text = "Name",
+                    selected = sort == DocumentSort.NAME,
+                    onClick = { sort = DocumentSort.NAME }
+                )
+                SortButton(
+                    text = "Pages",
+                    selected = sort == DocumentSort.PAGES,
+                    onClick = { sort = DocumentSort.PAGES }
+                )
+            }
+
+            if (visible.isEmpty()) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
+                    Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(28.dp)
+                    ) {
                         Icon(
                             Icons.Default.FolderOpen,
                             contentDescription = null,
-                            modifier = Modifier.size(80.dp),
+                            modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.outline
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(Modifier.height(12.dp))
                         Text(
-                            if (searchQuery.isBlank()) "No documents yet" else "No results found",
-                            style = MaterialTheme.typography.titleMedium,
+                            if (documents.isEmpty()) {
+                                "No documents yet"
+                            } else {
+                                "No matching documents"
+                            },
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            if (documents.isEmpty()) {
+                                "Scan or import pages from Home to create your first PDF."
+                            } else {
+                                "Try another document name or clear the filter."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else {
-                // Recent header
-                Text(
-                    "Recent",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredDocuments, key = { it.id }) { document ->
-                        EnhancedDocumentListItem(
+                    items(visible, key = { it.id }) { document ->
+                        DocumentListCard(
                             document = document,
-                            onClick = { onDocumentClick(document.id) },
-                            onMenuClick = { showBottomSheet = document }
+                            onOpen = { onDocumentClick(document.id) },
+                            onMore = { menuDocument = document }
                         )
                     }
                 }
             }
         }
     }
-    
-    // Bottom sheet for document options
-    showBottomSheet?.let { document ->
+
+    menuDocument?.let { document ->
         ModalBottomSheet(
-            onDismissRequest = { showBottomSheet = null },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surface
+            onDismissRequest = { menuDocument = null },
+            sheetState = rememberModalBottomSheetState()
         ) {
-            DocumentOptionsBottomSheet(
-                document = document,
-                onEmojiClick = {
-                    showEmojiPicker = document
-                    showBottomSheet = null
+            Text(
+                document.name.removeSuffix(".pdf"),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            ListItem(
+                headlineContent = { Text("Open") },
+                leadingContent = {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null)
                 },
-                onShare = {
-                    shareDocument(context, document)
-                    showBottomSheet = null
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                supportingContent = null
+            )
+            TextButton(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                onClick = {
+                    menuDocument = null
+                    onDocumentClick(document.id)
+                }
+            ) { Text("Open document") }
+
+            HorizontalDivider()
+
+            BottomAction(
+                icon = Icons.Default.FindInPage,
+                title = "Extracted text",
+                subtitle = if (document.isOcrProcessed) {
+                    "View saved OCR text"
+                } else {
+                    "Run offline OCR and view text"
                 },
-                onRename = {
-                    showRenameDialog = document
-                    showBottomSheet = null
-                },
-                onDelete = {
-                    showDeleteDialog = document
-                    showBottomSheet = null
+                onClick = {
+                    menuDocument = null
+                    onOcrTextClick(document.id)
                 }
             )
+            BottomAction(
+                icon = Icons.Default.Share,
+                title = "Share",
+                subtitle = "Send the PDF with Android share sheet",
+                onClick = {
+                    menuDocument = null
+                    scope.launch {
+                        shareDocumentPhase6(context, repository, document)
+                    }
+                }
+            )
+            BottomAction(
+                icon = Icons.Default.Edit,
+                title = "Rename",
+                subtitle = "Change the name shown in DocuScan",
+                onClick = {
+                    menuDocument = null
+                    renameDocument = document
+                }
+            )
+            BottomAction(
+                icon = Icons.Default.Delete,
+                title = "Delete",
+                subtitle = "Remove the local PDF and its thumbnail",
+                destructive = true,
+                onClick = {
+                    menuDocument = null
+                    deleteDocument = document
+                }
+            )
+            Spacer(Modifier.height(24.dp))
         }
     }
-    
-    // Emoji picker dialog
-    showEmojiPicker?.let { document ->
+
+    renameDocument?.let { document ->
+        var value by remember(document.id) {
+            mutableStateOf(document.name.removeSuffix(".pdf"))
+        }
+
         AlertDialog(
-            onDismissRequest = { showEmojiPicker = null },
-            title = { Text("Choose Emoji", fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    Text(
-                        "Select an emoji to mark this document",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    // Emoji grid
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(DOCUMENT_EMOJIS) { emoji ->
-                            Surface(
-                                onClick = {
-                                    scope.launch {
-                                        repository.updateEmoji(document.id, emoji)
-                                        Toast.makeText(context, "Marked with $emoji", Toast.LENGTH_SHORT).show()
-                                    }
-                                    showEmojiPicker = null
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (document.emoji == emoji) 
-                                    MaterialTheme.colorScheme.primaryContainer 
-                                else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(emoji, fontSize = 24.sp)
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (document.emoji != null) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    repository.updateEmoji(document.id, null)
-                                    Toast.makeText(context, "Emoji removed", Toast.LENGTH_SHORT).show()
-                                }
-                                showEmojiPicker = null
-                            }
-                        ) {
-                            Text("Remove emoji", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showEmojiPicker = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-    
-    // Rename dialog
-    showRenameDialog?.let { document ->
-        var newName by remember { mutableStateOf(document.name.removeSuffix(".pdf")) }
-        
-        AlertDialog(
-            onDismissRequest = { showRenameDialog = null },
-            icon = { Icon(Icons.Default.Edit, contentDescription = null) },
-            title = { Text("Rename Document", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { renameDocument = null },
+            title = { Text("Rename document") },
             text = {
                 OutlinedTextField(
-                    value = newName,
-                    onValueChange = { newName = it },
-                    label = { Text("Document name") },
-                    singleLine = true,
+                    value = value,
+                    onValueChange = { value = it.take(100) },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    label = { Text("Name") },
+                    singleLine = true
                 )
             },
             confirmButton = {
                 Button(
+                    enabled = value.isNotBlank(),
                     onClick = {
-                        if (newName.isNotBlank()) {
-                            val finalName = if (newName.endsWith(".pdf")) newName else "$newName.pdf"
-                            scope.launch {
-                                repository.renameDocument(document.id, finalName)
-                                Toast.makeText(context, "Document renamed", Toast.LENGTH_SHORT).show()
+                        val newName = value.trim()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                repository.renameDocument(
+                                    document.id,
+                                    newName
+                                )
                             }
-                            showRenameDialog = null
                         }
-                    },
-                    enabled = newName.isNotBlank()
-                ) {
-                    Text("Rename")
-                }
+                        renameDocument = null
+                    }
+                ) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { showRenameDialog = null }) {
+                TextButton(onClick = { renameDocument = null }) {
                     Text("Cancel")
                 }
             }
         )
     }
-    
-    // Delete confirmation dialog
-    showDeleteDialog?.let { document ->
+
+    deleteDocument?.let { document ->
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = null },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text("Delete Document?") },
+            onDismissRequest = { deleteDocument = null },
+            title = { Text("Delete document?") },
             text = {
-                Text("Are you sure you want to delete \"${document.name}\"? This cannot be undone.")
+                Text(
+                    "\"${document.name.removeSuffix(".pdf")}\" will be permanently removed from this device."
+                )
             },
             confirmButton = {
                 Button(
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
                     onClick = {
                         scope.launch {
-                            PdfGenerator.deleteDocument(document.pdfPath, document.thumbnailPath)
-                            repository.deleteDocument(document)
-                            Toast.makeText(context, "Document deleted", Toast.LENGTH_SHORT).show()
+                            withContext(Dispatchers.IO) {
+                                PdfGenerator.deleteDocument(
+                                    document.pdfPath,
+                                    document.thumbnailPath
+                                )
+                                repository.deleteDocument(document)
+                            }
                         }
-                        showDeleteDialog = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Delete")
-                }
+                        deleteDocument = null
+                    }
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = null }) {
+                TextButton(onClick = { deleteDocument = null }) {
                     Text("Cancel")
                 }
             }
@@ -335,286 +414,177 @@ fun DocumentsScreen(
 }
 
 @Composable
-private fun EnhancedDocumentListItem(
+private fun SortButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    androidx.compose.material3.FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(text) }
+    )
+}
+
+@Composable
+private fun DocumentListCard(
     document: Document,
-    onClick: () -> Unit,
-    onMenuClick: () -> Unit
+    onOpen: () -> Unit,
+    onMore: () -> Unit
 ) {
     Card(
-        onClick = onClick,
+        onClick = onOpen,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // PDF icon
-            Surface(
-                modifier = Modifier.size(48.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFFEF4444).copy(alpha = 0.15f)
+            Box(
+                modifier = Modifier.size(width = 60.dp, height = 76.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
+                if (!document.thumbnailPath.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(document.thumbnailPath)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Preview of ${document.name}",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
                     Icon(
                         Icons.Default.PictureAsPdf,
                         contentDescription = null,
-                        modifier = Modifier.size(26.dp),
-                        tint = Color(0xFFEF4444)
+                        modifier = Modifier.size(34.dp),
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = document.name.removeSuffix(".pdf"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    // Show emoji if set
-                    document.emoji?.let { emoji ->
-                        Text(emoji, fontSize = 16.sp)
-                    }
-                }
-                // Date | Size | Time
-                Text(
-                    text = "${formatDate(document.createdAt)} | ${formatFileSize(document.size)} | ${formatTime(document.createdAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            // 3-dot menu
-            IconButton(onClick = onMenuClick) {
-                Icon(
-                    Icons.Default.MoreVert,
-                    contentDescription = "Options",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
 
-@Composable
-private fun DocumentOptionsBottomSheet(
-    document: Document,
-    onEmojiClick: () -> Unit,
-    onShare: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 32.dp)
-    ) {
-        // Document header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(
-                modifier = Modifier.size(52.dp),
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFFEF4444).copy(alpha = 0.15f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.PictureAsPdf,
-                        contentDescription = null,
-                        modifier = Modifier.size(28.dp),
-                        tint = Color(0xFFEF4444)
-                    )
-                }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         document.name.removeSuffix(".pdf"),
+                        modifier = Modifier.weight(1f),
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        overflow = TextOverflow.Ellipsis
                     )
-                    document.emoji?.let { Text(it, fontSize = 18.sp) }
+                    document.emoji?.let {
+                        Spacer(Modifier.width(6.dp))
+                        Text(it)
+                    }
                 }
                 Text(
-                    "${formatDate(document.createdAt)} | ${formatFileSize(document.size)} | ${formatTime(document.createdAt)}",
+                    "${document.pageCount} page${if (document.pageCount == 1) "" else "s"} • " +
+                        PdfGenerator.formatFileSize(document.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Updated ${formatDocumentDate(document.updatedAt)}" +
+                        if (document.isOcrProcessed) " • Text indexed" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-        
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-        
-        // Quick action buttons row
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            QuickActionIcon(
-                icon = Icons.Outlined.EmojiEmotions,
-                label = "Emoji",
-                onClick = onEmojiClick
-            )
-            QuickActionIcon(
-                icon = Icons.Default.Share,
-                label = "Share",
-                onClick = onShare
-            )
-            QuickActionIcon(
-                icon = Icons.Outlined.Edit,
-                label = "Rename",
-                onClick = onRename
-            )
-        }
-        
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-        
-        // Delete option only
-        BottomSheetMenuItem(
-            icon = Icons.Default.Delete,
-            label = "Delete",
-            onClick = onDelete,
-            isDestructive = true
-        )
-    }
-}
 
-@Composable
-private fun QuickActionIcon(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(4.dp)
-    ) {
-        Surface(
-            onClick = onClick,
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            modifier = Modifier.size(52.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
+            IconButton(
+                onClick = onMore,
+                modifier = Modifier.size(48.dp)
+            ) {
                 Icon(
-                    icon,
-                    contentDescription = label,
-                    modifier = Modifier.size(24.dp)
+                    Icons.Default.MoreVert,
+                    contentDescription = "More options for ${document.name}"
                 )
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium
-        )
     }
 }
 
 @Composable
-private fun BottomSheetMenuItem(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    isDestructive: Boolean = false
+private fun BottomAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        color = Color.Transparent
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+    ListItem(
+        headlineContent = {
+            Text(
+                title,
+                color = if (destructive) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+        },
+        supportingContent = { Text(subtitle) },
+        leadingContent = {
             Icon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(24.dp),
-                tint = if (isDestructive) MaterialTheme.colorScheme.error 
-                       else MaterialTheme.colorScheme.onSurface
+                tint = if (destructive) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                }
             )
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = if (isDestructive) MaterialTheme.colorScheme.error 
-                        else MaterialTheme.colorScheme.onSurface
-            )
-        }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+    )
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+    ) {
+        Text(title)
     }
 }
 
-private fun shareDocument(context: android.content.Context, document: Document) {
-    try {
-        val file = File(document.pdfPath)
+private suspend fun shareDocumentPhase6(
+    context: android.content.Context,
+    repository: DocumentRepository,
+    document: Document
+) {
+    val file = File(document.pdfPath)
+    if (!file.isFile) {
+        Toast.makeText(context, "PDF file is missing", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    runCatching {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
             file
         )
-        
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        
         context.startActivity(Intent.createChooser(intent, "Share PDF"))
-    } catch (e: Exception) {
-        Toast.makeText(context, "Failed to share: ${e.message}", Toast.LENGTH_SHORT).show()
+        repository.markShared(document.id)
+    }.onFailure {
+        Toast.makeText(context, "Could not share PDF", Toast.LENGTH_SHORT).show()
     }
 }
 
-private fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MM/dd/yyyy", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
-private fun formatFullDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMMM dd, yyyy 'at' hh:mm a", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
-private fun formatTime(timestamp: Long): String {
-    val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
-private fun formatFileSize(bytes: Long): String {
-    return when {
-        bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-        else -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
-    }
-}
+private fun formatDocumentDate(timestamp: Long): String =
+    SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        .format(Date(timestamp))

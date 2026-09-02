@@ -17,8 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
 /**
- * Privacy-first dialog shown on first launch.
- * Emphasizes offline processing and data security.
+ * Privacy dialog shown on first launch.
+ * Uses truthful Phase-6 on-device privacy copy.
  */
 @Composable
 fun PrivacyDialog(
@@ -37,7 +37,6 @@ fun PrivacyDialog(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Shield icon with gradient background
                 Box(
                     modifier = Modifier
                         .size(80.dp)
@@ -60,7 +59,7 @@ fun PrivacyDialog(
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 Text(
-                    "Your Privacy Matters",
+                    "Private by Design",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -68,29 +67,28 @@ fun PrivacyDialog(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Privacy features
                 PrivacyFeature(
-                    icon = Icons.Default.WifiOff,
-                    title = "100% Offline",
-                    description = "All processing happens on your device"
+                    icon = Icons.Default.Lock,
+                    title = "On-Device Processing",
+                    description = "Core scanning, PDF tools and bundled OCR run locally on your device."
                 )
                 
                 PrivacyFeature(
-                    icon = Icons.Default.CloudOff,
-                    title = "No Cloud Upload",
-                    description = "Your documents never leave your phone"
+                    icon = Icons.Default.PrivacyTip,
+                    title = "Local App Data",
+                    description = "Document records and OCR text are stored in the app's local data."
                 )
                 
                 PrivacyFeature(
                     icon = Icons.Default.PersonOff,
                     title = "No Account Required",
-                    description = "Start scanning instantly, no sign-up needed"
+                    description = "DocuScan does not require sign-in to use its features."
                 )
                 
                 PrivacyFeature(
-                    icon = Icons.Default.Lock,
+                    icon = Icons.Default.DeleteSweep,
                     title = "Your Data, Your Control",
-                    description = "Delete anytime, no trace left behind"
+                    description = "Delete documents and thumbnails permanently at any time."
                 )
                 
                 Spacer(modifier = Modifier.height(24.dp))

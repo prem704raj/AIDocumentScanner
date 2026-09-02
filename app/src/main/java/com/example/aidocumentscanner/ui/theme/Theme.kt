@@ -1,6 +1,8 @@
 package com.example.aidocumentscanner.ui.theme
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -16,11 +18,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// Theme mode enum for independent theme selection
 enum class ThemeMode {
-    SYSTEM,  // Follow system theme
-    LIGHT,   // Force light mode
-    DARK     // Force dark mode
+    SYSTEM,
+    LIGHT,
+    DARK
 }
 
 private val DarkColorScheme = darkColorScheme(
@@ -104,22 +105,31 @@ fun AIDocumentScannerTheme(
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    
+
+    val context = LocalContext.current
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (darkTheme) {
+                dynamicDarkColorScheme(context)
+            } else {
+                dynamicLightColorScheme(context)
+            }
         }
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
-    
+
     val view = LocalView.current
-    if (!view.isInEditMode) {
+    val activity = rememberActivity(context)
+
+    if (!view.isInEditMode && activity != null) {
         SideEffect {
-            val window = (view.context as Activity).window
+            val window = activity.window
             window.statusBarColor = colorScheme.surface.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            WindowCompat.getInsetsController(
+                window,
+                view
+            ).isAppearanceLightStatusBars = !darkTheme
         }
     }
 
@@ -129,3 +139,16 @@ fun AIDocumentScannerTheme(
         content = content
     )
 }
+
+@Composable
+private fun rememberActivity(context: Context): Activity? =
+    androidx.compose.runtime.remember(context) {
+        context.findActivity()
+    }
+
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
