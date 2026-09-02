@@ -6,20 +6,23 @@ plugins {
 }
 
 android {
+    // RELEASE IDENTITY GATE: resolve this before Phase 11.
     namespace = "com.example.aidocumentscanner"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.aidocumentscanner"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -28,24 +31,30 @@ android {
                 "proguard-rules.pro"
             )
         }
-        debug {
-            isMinifyEnabled = false
-        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }
+
     buildFeatures {
         compose = true
         buildConfig = true
     }
-    
+
     ksp {
         arg("room.generateKotlin", "true")
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = false
+        warningsAsErrors = false
     }
 
     packaging {
@@ -68,50 +77,41 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
-    
-    // Navigation
+
     implementation(libs.androidx.navigation.compose)
-    
-    // CameraX
+
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
-    
-    // Coil for image loading
+
     implementation(libs.coil.compose)
-    
-    // Room database
+
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-    
-    // PDF generation
+
+    // RELEASE BLOCKER: iText licensing/replacement must be resolved before closed-source commercial release.
     implementation(libs.itextpdf)
-    
-    // OpenCV for image processing
+
     implementation(libs.opencv)
-    
-    // Accompanist for permissions
-    implementation(libs.accompanist.permissions)
-    
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.datastore.preferences)
+
     testImplementation(libs.junit)
+
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-    
-    // ML Kit for OCR
-    implementation(libs.mlkit.text.recognition)
-    
-    // DataStore for preferences
-    implementation(libs.datastore.preferences)
 }

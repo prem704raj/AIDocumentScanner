@@ -1,47 +1,26 @@
-# iTextPDF
--keep class com.itextpdf.** { *; }
--dontwarn com.itextpdf.**
+# Preserve generic signatures and runtime-visible annotations used by libraries.
+-keepattributes Signature
+-keepattributes RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,AnnotationDefault
 
-# OpenCV
+# OpenCV JNI/native bridge. Keep conservatively until a native dependency migration is done.
 -keep class org.opencv.** { *; }
 -dontwarn org.opencv.**
 
-# ML Kit
--keep class com.google.mlkit.** { *; }
--dontwarn com.google.mlkit.**
+# Temporary iText 5 compatibility rule until the release licensing/replacement gate is resolved.
+-keep class com.itextpdf.** { *; }
+-dontwarn com.itextpdf.**
+-dontwarn javax.xml.crypto.**
+-dontwarn org.apache.jcp.**
+-dontwarn org.apache.xml.security.**
+-dontwarn org.bouncycastle.**
 
-# Room Database
--keep class * extends androidx.room.RoomDatabase
--keep @androidx.room.Entity class *
--dontwarn androidx.room.paging.**
-
-# Coil
--keep class coil.** { *; }
--dontwarn coil.**
-
-# Accompanist
--keep class com.google.accompanist.** { *; }
--dontwarn com.google.accompanist.**
-
-# Kotlin Coroutines
--keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
--keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
--keepclassmembers class kotlinx.coroutines.** {
-    volatile <fields>;
+# Preserve native method names for any JNI bridge.
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
 }
 
-# DataStore
--keepclassmembers class * extends androidx.datastore.preferences.protobuf.GeneratedMessageLite {
-    <fields>;
-}
-
-# Keep ViewModel classes
--keepclassmembers class * extends androidx.lifecycle.ViewModel {
-    <init>(...);
-}
-
-# Keep Compose
--keep class androidx.compose.** { *; }
-
-# Keep application classes
--keep class com.example.aidocumentscanner.** { *; }
+# DO NOT restore broad rules such as:
+# -keep class com.example.aidocumentscanner.** { *; }
+# -keep class androidx.compose.** { *; }
+# -keep class coil.** { *; }
+# -keep class com.google.mlkit.** { *; }

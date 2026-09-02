@@ -1,6 +1,5 @@
 package com.example.aidocumentscanner.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -41,12 +40,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -57,19 +54,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import com.example.aidocumentscanner.data.Document
-import com.example.aidocumentscanner.data.DocumentRepository
-import com.example.aidocumentscanner.ocr.OcrEngine
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-
-data class SearchResultItem(
-    val documentId: Long,
-    val documentName: String,
-    val pageIndex: Int,
-    val context: String
-)
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.aidocumentscanner.DocuScanApplication
+import com.example.aidocumentscanner.domain.search.DocumentSearchResult
+import com.example.aidocumentscanner.ui.search.SearchViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,39 +65,19 @@ fun SearchScreen(
     onBack: () -> Unit,
     onResultClick: (Long, Int) -> Unit
 ) {
-    val context = LocalContext.current
-    val repository = remember { DocumentRepository(context) }
-    val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
-    val scope = rememberCoroutineScope()
+    val app = LocalContext.current.applicationContext as DocuScanApplication
+    val viewModel: SearchViewModel = viewModel(
+        factory = SearchViewModel.Factory(
+            app.container.searchDocumentsUseCase
+        )
+    )
+    val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
 
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var progressText by remember { mutableStateOf<String?>(null) }
-    var hasSearched by remember { mutableStateOf(false) }
-
-    fun startSearch() {
-        val needle = query.trim()
-        if (needle.isEmpty() || searching) return
-
-        scope.launch {
-            searching = true
-            hasSearched = true
-            try {
-                results = searchAndPersistMissingOcr(
-                    context = context,
-                    repository = repository,
-                    documents = documents,
-                    query = needle,
-                    onProgress = { progressText = it }
-                )
-            } catch (error: Throwable) {
-                snackbar.showSnackbar(error.message ?: "Search failed")
-            } finally {
-                searching = false
-                progressText = null
-            }
+    LaunchedEffect(state.errorMessage) {
+        state.errorMessage?.let {
+            snackbar.showSnackbar(it)
+            viewModel.dismissError()
         }
     }
 
@@ -117,10 +85,12 @@ fun SearchScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("Search documents", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text("Search documents", fontWeight = FontWeight.Bold)
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -132,22 +102,18 @@ fun SearchScreen(
                 .padding(padding)
         ) {
             OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+                value = state.query,
+                onValueChange = viewModel::setQuery,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                placeholder = { Text("Search document names and scanned text") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                placeholder = { Text("Search names and scanned text") },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                },
                 trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                query = ""
-                                results = emptyList()
-                                hasSearched = false
-                            }
-                        ) {
+                    if (state.query.isNotEmpty()) {
+                        IconButton(onClick = viewModel::clearQuery) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
@@ -155,24 +121,24 @@ fun SearchScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { startSearch() })
+                keyboardActions = KeyboardActions(onSearch = { viewModel.search() })
             )
 
             Button(
-                onClick = { startSearch() },
-                enabled = query.isNotBlank() && !searching,
+                onClick = viewModel::search,
+                enabled = state.query.isNotBlank() && !state.isSearching,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
                     .height(50.dp)
             ) {
-                if (searching) {
+                if (state.isSearching) {
                     CircularProgressIndicator(
-                        Modifier.size(20.dp),
+                        modifier = Modifier.size(20.dp),
                         strokeWidth = 2.dp
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(progressText ?: "Searching…")
+                    Text(state.progress ?: "Searching…")
                 } else {
                     Icon(Icons.Default.Search, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -183,41 +149,37 @@ fun SearchScreen(
             Spacer(Modifier.height(12.dp))
 
             when {
-                searching && results.isEmpty() -> Unit
-
-                results.isNotEmpty() -> {
+                state.results.isNotEmpty() -> {
                     Text(
-                        "${results.size} match${if (results.size == 1) "" else "es"}",
+                        "${state.results.size} match${if (state.results.size == 1) "" else "es"}",
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium
                     )
+
                     LazyColumn(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(
-                            items = results,
+                            state.results,
                             key = {
-                                "${it.documentId}:${it.pageIndex}:${it.context.hashCode()}"
+                                "${it.documentId}:${it.pageIndex}:${it.source}:${it.context.hashCode()}"
                             }
                         ) { result ->
-                            SearchResultCard(
+                            SearchResultCardPhase9(
                                 result = result,
-                                query = query.trim(),
+                                query = state.query.trim(),
                                 onClick = {
-                                    onResultClick(
-                                        result.documentId,
-                                        result.pageIndex
-                                    )
+                                    onResultClick(result.documentId, result.pageIndex)
                                 }
                             )
                         }
                     }
                 }
 
-                hasSearched -> {
-                    EmptySearchState(
+                state.hasSearched && !state.isSearching -> {
+                    SearchEmptyPhase9(
                         icon = Icons.Default.SearchOff,
                         title = "No matches",
                         subtitle = "Try another word or phrase."
@@ -225,10 +187,10 @@ fun SearchScreen(
                 }
 
                 else -> {
-                    EmptySearchState(
+                    SearchEmptyPhase9(
                         icon = Icons.Default.FindInPage,
-                        title = "Search inside scanned PDFs",
-                        subtitle = "OCR runs locally. A document is indexed only once unless you re-run OCR."
+                        title = "Search inside PDFs",
+                        subtitle = "OCR indexing is local and persisted so indexed documents are reused after restart."
                     )
                 }
             }
@@ -236,65 +198,9 @@ fun SearchScreen(
     }
 }
 
-private suspend fun searchAndPersistMissingOcr(
-    context: android.content.Context,
-    repository: DocumentRepository,
-    documents: List<Document>,
-    query: String,
-    onProgress: (String) -> Unit
-): List<SearchResultItem> = withContext(Dispatchers.IO) {
-    val output = mutableListOf<SearchResultItem>()
-
-    documents.forEachIndexed { documentIndex, document ->
-        val nameMatch = document.name.contains(query, ignoreCase = true)
-        if (nameMatch) {
-            output += SearchResultItem(
-                documentId = document.id,
-                documentName = document.name,
-                pageIndex = 0,
-                context = "Document name: ${document.name}"
-            )
-        }
-
-        val pages = if (document.isOcrProcessed) {
-            OcrEngine.decodePersisted(document.extractedText)
-        } else {
-            onProgress("Indexing ${documentIndex + 1}/${documents.size}")
-            val extracted = OcrEngine.extractTextFromPdf(
-                context,
-                document.pdfPath
-            ) { current, total ->
-                onProgress(
-                    "Indexing ${documentIndex + 1}/${documents.size} • page $current/$total"
-                )
-            }
-            repository.updateOcrText(
-                document.id,
-                OcrEngine.encodeForPersistence(extracted)
-            )
-            extracted
-        }
-
-        OcrEngine.searchKeyword(
-            pagesText = pages,
-            keyword = query,
-            caseSensitive = false
-        ).forEach { match ->
-            output += SearchResultItem(
-                documentId = document.id,
-                documentName = document.name,
-                pageIndex = match.pageIndex,
-                context = match.context
-            )
-        }
-    }
-
-    output
-}
-
 @Composable
-private fun SearchResultCard(
-    result: SearchResultItem,
+private fun SearchResultCardPhase9(
+    result: DocumentSearchResult,
     query: String,
     onClick: () -> Unit
 ) {
@@ -325,7 +231,11 @@ private fun SearchResultCard(
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        "Page ${result.pageIndex + 1}",
+                        if (result.source == DocumentSearchResult.Source.DOCUMENT_NAME) {
+                            "Name"
+                        } else {
+                            "Page ${result.pageIndex + 1}"
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -335,12 +245,13 @@ private fun SearchResultCard(
             Spacer(Modifier.height(8.dp))
             Text(
                 buildAnnotatedString {
-                    val lower = result.context.lowercase()
-                    val needle = query.lowercase()
-                    if (needle.isBlank()) {
+                    if (query.isBlank()) {
                         append(result.context)
                     } else {
+                        val lower = result.context.lowercase()
+                        val needle = query.lowercase()
                         var cursor = 0
+
                         while (cursor < result.context.length) {
                             val hit = lower.indexOf(needle, cursor)
                             if (hit < 0) {
@@ -357,9 +268,7 @@ private fun SearchResultCard(
                                 append(
                                     result.context.substring(
                                         hit,
-                                        (hit + needle.length).coerceAtMost(
-                                            result.context.length
-                                        )
+                                        (hit + needle.length).coerceAtMost(result.context.length)
                                     )
                                 )
                             }
@@ -376,13 +285,13 @@ private fun SearchResultCard(
 }
 
 @Composable
-private fun EmptySearchState(
+private fun SearchEmptyPhase9(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String
 ) {
     Box(
-        Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Column(

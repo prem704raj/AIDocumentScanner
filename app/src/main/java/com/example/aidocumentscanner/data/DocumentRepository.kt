@@ -5,10 +5,24 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlin.math.absoluteValue
 
-class DocumentRepository(context: Context) {
-    private val database = AppDatabase.getDatabase(context)
-    private val documentDao = database.documentDao()
-    private val folderDao = database.folderDao()
+/**
+ * Room-backed document repository.
+ *
+ * The primary constructor is injectable. The Context constructor remains temporarily
+ * so older Phase-1..8 screens can migrate incrementally rather than through a flag-day rewrite.
+ */
+class DocumentRepository(
+    private val documentDao: DocumentDao,
+    private val folderDao: FolderDao
+) {
+    constructor(context: Context) : this(
+        documentDao = AppDatabase
+            .getDatabase(context.applicationContext)
+            .documentDao(),
+        folderDao = AppDatabase
+            .getDatabase(context.applicationContext)
+            .folderDao()
+    )
 
     fun getAllDocuments(): Flow<List<Document>> =
         documentDao.getAllDocuments()
@@ -31,28 +45,29 @@ class DocumentRepository(context: Context) {
     suspend fun deleteDocument(document: Document) {
         val folderId = document.folderId
         documentDao.deleteDocument(document)
-        if (folderId != null) {
-            folderDao.updateDocumentCount(folderId)
-        }
+        folderId?.let { folderDao.updateDocumentCount(it) }
     }
 
     suspend fun deleteDocumentById(id: Long) {
         val folderId = documentDao.getDocumentById(id)?.folderId
         documentDao.deleteDocumentById(id)
-        if (folderId != null) {
-            folderDao.updateDocumentCount(folderId)
-        }
+        folderId?.let { folderDao.updateDocumentCount(it) }
     }
 
     suspend fun getDocumentCount(): Int =
         documentDao.getDocumentCount()
 
-    suspend fun renameDocument(documentId: Long, newName: String) =
+    suspend fun renameDocument(documentId: Long, newName: String) {
+        val clean = newName.trim().take(100)
+        require(clean.isNotBlank()) {
+            "Document name cannot be empty"
+        }
         documentDao.renameDocument(
             documentId,
-            newName.trim(),
+            clean,
             System.currentTimeMillis()
         )
+    }
 
     suspend fun updateEmoji(documentId: Long, emoji: String?) =
         documentDao.updateEmoji(
@@ -76,10 +91,6 @@ class DocumentRepository(context: Context) {
             System.currentTimeMillis()
         )
 
-    // -----------------------------------------------------------------
-    // Student-mode subject/folder integration
-    // -----------------------------------------------------------------
-
     fun getStudentSubjects(): Flow<List<Folder>> =
         folderDao.getCustomFolders().map { folders ->
             folders.filter { it.icon == STUDENT_SUBJECT_ICON }
@@ -93,15 +104,18 @@ class DocumentRepository(context: Context) {
 
     suspend fun createStudentSubject(name: String): Long {
         val clean = normalizeSubjectName(name)
-        require(clean.isNotBlank()) { "Subject name cannot be empty" }
-
-        val sameName = folderDao.getFolderByName(clean)
-        if (sameName != null && sameName.icon == STUDENT_SUBJECT_ICON) {
-            return sameName.id
+        require(clean.isNotBlank()) {
+            "Subject name cannot be empty"
         }
 
-        val palette = SUBJECT_COLORS
-        val color = palette[clean.lowercase().hashCode().absoluteValue % palette.size]
+        val existing = folderDao.getFolderByName(clean)
+        if (existing != null && existing.icon == STUDENT_SUBJECT_ICON) {
+            return existing.id
+        }
+
+        val color = SUBJECT_COLORS[
+            clean.lowercase().hashCode().absoluteValue % SUBJECT_COLORS.size
+        ]
 
         return folderDao.insertFolder(
             Folder(

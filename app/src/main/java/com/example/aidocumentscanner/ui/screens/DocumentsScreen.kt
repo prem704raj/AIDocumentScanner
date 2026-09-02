@@ -1,5 +1,6 @@
 package com.example.aidocumentscanner.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
@@ -18,7 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -42,16 +43,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,24 +63,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.aidocumentscanner.DocuScanApplication
 import com.example.aidocumentscanner.data.Document
-import com.example.aidocumentscanner.data.DocumentRepository
 import com.example.aidocumentscanner.pdf.PdfGenerator
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.example.aidocumentscanner.ui.documents.DocumentSort
+import com.example.aidocumentscanner.ui.documents.DocumentsViewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-private enum class DocumentSort {
-    RECENT,
-    NAME,
-    PAGES
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,33 +85,33 @@ fun DocumentsScreen(
     onOcrTextClick: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val repository = remember { DocumentRepository(context) }
-    val documents by repository.getAllDocuments().collectAsState(initial = emptyList())
-    val scope = rememberCoroutineScope()
+    val app = context.applicationContext as DocuScanApplication
+    val viewModel: DocumentsViewModel = viewModel(
+        factory = DocumentsViewModel.Factory(
+            repository = app.container.documentRepository,
+            fileStore = app.container.documentFileStore
+        )
+    )
 
-    var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(DocumentSort.RECENT) }
+    val documents by viewModel.allDocuments.collectAsState()
+    val visible by viewModel.visibleDocuments.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+
+    val snackbar = remember { SnackbarHostState() }
+
+    LaunchedEffect(uiState.message) {
+        uiState.message?.let {
+            snackbar.showSnackbar(it)
+            viewModel.dismissMessage()
+        }
+    }
+
     var menuDocument by remember { mutableStateOf<Document?>(null) }
     var renameDocument by remember { mutableStateOf<Document?>(null) }
     var deleteDocument by remember { mutableStateOf<Document?>(null) }
 
-    val visible = remember(documents, query, sort) {
-        val filtered = if (query.isBlank()) {
-            documents
-        } else {
-            documents.filter {
-                it.name.contains(query, ignoreCase = true)
-            }
-        }
-
-        when (sort) {
-            DocumentSort.RECENT -> filtered.sortedByDescending { it.updatedAt }
-            DocumentSort.NAME -> filtered.sortedBy { it.name.lowercase() }
-            DocumentSort.PAGES -> filtered.sortedByDescending { it.pageCount }
-        }
-    }
-
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
@@ -132,7 +129,7 @@ fun DocumentsScreen(
                         onClick = onBack,
                         modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -155,8 +152,8 @@ fun DocumentsScreen(
                 .padding(padding)
         ) {
             OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+                value = uiState.query,
+                onValueChange = viewModel::setQuery,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -165,8 +162,8 @@ fun DocumentsScreen(
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
                 trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
+                    if (uiState.query.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.setQuery("") }) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
@@ -183,18 +180,18 @@ fun DocumentsScreen(
             ) {
                 SortButton(
                     text = "Recent",
-                    selected = sort == DocumentSort.RECENT,
-                    onClick = { sort = DocumentSort.RECENT }
+                    selected = uiState.sort == DocumentSort.RECENT,
+                    onClick = { viewModel.setSort(DocumentSort.RECENT) }
                 )
                 SortButton(
                     text = "Name",
-                    selected = sort == DocumentSort.NAME,
-                    onClick = { sort = DocumentSort.NAME }
+                    selected = uiState.sort == DocumentSort.NAME,
+                    onClick = { viewModel.setSort(DocumentSort.NAME) }
                 )
                 SortButton(
                     text = "Pages",
-                    selected = sort == DocumentSort.PAGES,
-                    onClick = { sort = DocumentSort.PAGES }
+                    selected = uiState.sort == DocumentSort.PAGES,
+                    onClick = { viewModel.setSort(DocumentSort.PAGES) }
                 )
             }
 
@@ -306,9 +303,7 @@ fun DocumentsScreen(
                 subtitle = "Send the PDF with Android share sheet",
                 onClick = {
                     menuDocument = null
-                    scope.launch {
-                        shareDocumentPhase6(context, repository, document)
-                    }
+                    shareDocumentPhase9(context, viewModel, document)
                 }
             )
             BottomAction(
@@ -356,14 +351,7 @@ fun DocumentsScreen(
                     enabled = value.isNotBlank(),
                     onClick = {
                         val newName = value.trim()
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                repository.renameDocument(
-                                    document.id,
-                                    newName
-                                )
-                            }
-                        }
+                        viewModel.renameDocument(document.id, newName)
                         renameDocument = null
                     }
                 ) { Text("Save") }
@@ -391,15 +379,7 @@ fun DocumentsScreen(
                         containerColor = MaterialTheme.colorScheme.error
                     ),
                     onClick = {
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                PdfGenerator.deleteDocument(
-                                    document.pdfPath,
-                                    document.thumbnailPath
-                                )
-                                repository.deleteDocument(document)
-                            }
-                        }
+                        viewModel.deleteDocument(document)
                         deleteDocument = null
                     }
                 ) { Text("Delete") }
@@ -556,9 +536,9 @@ private fun BottomAction(
     }
 }
 
-private suspend fun shareDocumentPhase6(
-    context: android.content.Context,
-    repository: DocumentRepository,
+private fun shareDocumentPhase9(
+    context: Context,
+    viewModel: DocumentsViewModel,
     document: Document
 ) {
     val file = File(document.pdfPath)
@@ -579,7 +559,7 @@ private suspend fun shareDocumentPhase6(
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share PDF"))
-        repository.markShared(document.id)
+        viewModel.markShared(document.id)
     }.onFailure {
         Toast.makeText(context, "Could not share PDF", Toast.LENGTH_SHORT).show()
     }
