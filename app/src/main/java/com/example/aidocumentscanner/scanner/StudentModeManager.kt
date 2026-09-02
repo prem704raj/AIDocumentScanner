@@ -162,6 +162,12 @@ object StudentModeManager {
         }
     }
 
+    suspend fun reset(context: Context) {
+        context.studentModeDataStore.edit { prefs ->
+            prefs.clear()
+        }
+    }
+
     suspend fun configureQuickScan(
         context: Context,
         preset: StudentScanPreset,

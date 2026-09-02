@@ -25,6 +25,7 @@ import com.example.aidocumentscanner.ui.screens.PdfOptimizerScreen
 import com.example.aidocumentscanner.ui.screens.PdfPreviewScreen
 import com.example.aidocumentscanner.ui.screens.PdfToolsScreen
 import com.example.aidocumentscanner.ui.screens.PdfViewerScreen
+import com.example.aidocumentscanner.ui.screens.PrivacyScreen
 import com.example.aidocumentscanner.ui.screens.SearchScreen
 import com.example.aidocumentscanner.ui.screens.SettingsScreen
 import com.example.aidocumentscanner.ui.screens.StudentHubScreen
@@ -38,6 +39,7 @@ sealed class Screen(val route: String) {
     data object PdfPreview : Screen("pdf_preview")
     data object Documents : Screen("documents")
     data object Settings : Screen("settings")
+    data object Privacy : Screen("privacy")
 
     data object PdfViewer : Screen("pdf_viewer/{documentId}?page={page}") {
         fun createRoute(documentId: Long, page: Int = 0): String =
@@ -270,7 +272,23 @@ fun AppNavigation(
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 currentThemeMode = themeMode,
-                onThemeModeChange = onThemeModeChange
+                onThemeModeChange = onThemeModeChange,
+                onPrivacyClick = {
+                    navController.navigate(Screen.Privacy.route)
+                }
+            )
+        }
+
+        composable(Screen.Privacy.route) {
+            PrivacyScreen(
+                onBack = { navController.popBackStack() },
+                onDataCleared = {
+                    onClearPages()
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.Home.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
             )
         }
 

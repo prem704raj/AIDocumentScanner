@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import com.example.aidocumentscanner.privacy.ExportRegistry
 import com.example.aidocumentscanner.ui.screens.SettingsPreferences
 import com.example.aidocumentscanner.ui.screens.StorageLocation
 import com.itextpdf.text.Document
@@ -15,41 +16,32 @@ import com.itextpdf.text.PageSize
 import com.itextpdf.text.Rectangle
 import com.itextpdf.text.pdf.PdfReader
 import com.itextpdf.text.pdf.PdfWriter
-import com.itextpdf.text.pdf.PdfCopy
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 /**
- * PDF Generator using iTextPDF library.
- * All processing is done locally - no internet required.
- * PDFs are saved based on user's storage preference.
+ * Internal PDF is authoritative. Public copies are optional user-configured exports and are
+ * tracked only after a complete Android 10+ MediaStore write succeeds.
  */
 object PdfGenerator {
-    
     private const val TAG = "PdfGenerator"
-    private const val APP_FOLDER = "AIDocumentScanner"
-    
+    private const val APP_FOLDER = "DocuScan"
+
     enum class PageSizeType(val rectangle: Rectangle) {
-        A4(PageSize.A4),
-        LETTER(PageSize.LETTER),
-        LEGAL(PageSize.LEGAL),
-        FIT_IMAGE(PageSize.A4)
+        A4(PageSize.A4), LETTER(PageSize.LETTER), LEGAL(PageSize.LEGAL), FIT_IMAGE(PageSize.A4)
     }
-    
+
     enum class QualityType(val jpegQuality: Int, val maxDimension: Int, val label: String) {
         STANDARD(80, 1920, "Standard (1080p)"),
         HIGH(90, 2560, "High (2K)"),
         ULTRA(100, 3840, "Ultra (4K)")
     }
-    
-    /**
-     * Generate PDF from list of bitmaps.
-     * Saves based on user's storage preference.
-     */
+
     fun generatePdf(
         context: Context,
         images: List<Bitmap>,
@@ -57,37 +49,48 @@ object PdfGenerator {
         pageSize: PageSizeType = PageSizeType.A4,
         quality: QualityType = QualityType.HIGH
     ): String {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val safeFileName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val pdfFileName = "${safeFileName}_$timestamp.pdf"
-        
-        // Always create internal copy first (for app's document list)
+        require(images.isNotEmpty()) { "At least one page is required" }
+
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val pdfFileName = "${sanitizeFileName(fileName)}_$timestamp.pdf"
         val documentsDir = File(context.filesDir, "documents")
-        if (!documentsDir.exists()) {
-            documentsDir.mkdirs()
+        require(documentsDir.exists() || documentsDir.mkdirs()) {
+            "Could not create document storage"
         }
         val internalFile = File(documentsDir, pdfFileName)
-        
-        // Generate PDF to internal storage
-        generatePdfToStream(FileOutputStream(internalFile), images, pageSize, quality)
-        
-        // Also save to user's preferred location if not internal
+
+        generatePdfToStream(
+            FileOutputStream(internalFile),
+            images,
+            pageSize,
+            quality
+        )
+
         val storageLocation = SettingsPreferences.getStorageLocation(context)
         if (storageLocation != StorageLocation.INTERNAL) {
-            try {
-                saveToPublicStorage(context, internalFile, pdfFileName, storageLocation)
-                Log.d(TAG, "PDF saved to ${storageLocation.label}: $pdfFileName")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save to ${storageLocation.label}: ${e.message}", e)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                runCatching {
+                    saveTrackedPublicCopy(
+                        context,
+                        internalFile,
+                        pdfFileName,
+                        storageLocation
+                    )
+                }.onFailure { error ->
+                    // Never invalidate the successful internal document because an optional
+                    // public copy failed.
+                    Log.e(TAG, "Public copy failed", error)
+                }
+            } else {
+                // Phase 1 removed broad storage permission. Phase 6 hides public choices on
+                // API 26-28; an old stored preference must not trigger unsafe direct writes.
+                Log.w(TAG, "Public copy skipped below Android 10; use Share instead")
             }
         }
-        
+
         return internalFile.absolutePath
     }
-    
-    /**
-     * Generate PDF to an OutputStream
-     */
+
     private fun generatePdfToStream(
         outputStream: OutputStream,
         images: List<Bitmap>,
@@ -95,181 +98,162 @@ object PdfGenerator {
         quality: QualityType
     ) {
         val document = Document()
-        
         try {
             PdfWriter.getInstance(document, outputStream)
             document.open()
-            
-            for ((index, bitmap) in images.withIndex()) {
-                val scaledBitmap = scaleForQuality(bitmap, quality)
-                
-                val stream = ByteArrayOutputStream()
-                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality.jpegQuality, stream)
-                val imageData = stream.toByteArray()
-                stream.close()
-                
-                if (scaledBitmap != bitmap) {
-                    scaledBitmap.recycle()
+
+            images.forEachIndexed { index, bitmap ->
+                require(!bitmap.isRecycled) { "Page ${index + 1} is recycled" }
+                val scaled = scaleForQuality(bitmap, quality)
+                val imageBytes = try {
+                    ByteArrayOutputStream().use { stream ->
+                        require(
+                            scaled.compress(
+                                Bitmap.CompressFormat.JPEG,
+                                quality.jpegQuality,
+                                stream
+                            )
+                        ) { "Could not encode page ${index + 1}" }
+                        stream.toByteArray()
+                    }
+                } finally {
+                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
                 }
-                
-                val image = Image.getInstance(imageData)
-                
+
+                val image = Image.getInstance(imageBytes)
                 if (pageSize == PageSizeType.FIT_IMAGE) {
-                    val pageRect = Rectangle(image.width, image.height)
-                    document.setPageSize(pageRect)
+                    document.setPageSize(Rectangle(image.width, image.height))
                     if (index > 0) document.newPage()
                     image.setAbsolutePosition(0f, 0f)
                 } else {
                     if (index > 0) document.newPage()
-                    
-                    val pageWidth = pageSize.rectangle.width - 40
-                    val pageHeight = pageSize.rectangle.height - 40
-                    
-                    image.scaleToFit(pageWidth, pageHeight)
-                    
-                    val x = (pageSize.rectangle.width - image.scaledWidth) / 2
-                    val y = (pageSize.rectangle.height - image.scaledHeight) / 2
-                    image.setAbsolutePosition(x, y)
+                    image.scaleToFit(
+                        pageSize.rectangle.width - 40f,
+                        pageSize.rectangle.height - 40f
+                    )
+                    image.setAbsolutePosition(
+                        (pageSize.rectangle.width - image.scaledWidth) / 2f,
+                        (pageSize.rectangle.height - image.scaledHeight) / 2f
+                    )
                 }
-                
                 document.add(image)
             }
         } finally {
-            document.close()
-            outputStream.close()
+            if (document.isOpen) document.close()
+            runCatching { outputStream.close() }
         }
     }
-    
-    /**
-     * Save PDF file to user's preferred public storage location
-     */
-    private fun saveToPublicStorage(
-        context: Context, 
-        sourceFile: File, 
+
+    private fun saveTrackedPublicCopy(
+        context: Context,
+        sourceFile: File,
         fileName: String,
         location: StorageLocation
     ) {
+        require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+
         val relativePath = when (location) {
-            StorageLocation.DOCUMENTS -> Environment.DIRECTORY_DOCUMENTS + "/$APP_FOLDER"
-            StorageLocation.DOWNLOADS -> Environment.DIRECTORY_DOWNLOADS + "/$APP_FOLDER"
-            StorageLocation.INTERNAL -> return // No public storage needed
+            StorageLocation.DOCUMENTS -> "${Environment.DIRECTORY_DOCUMENTS}/$APP_FOLDER"
+            StorageLocation.DOWNLOADS -> "${Environment.DIRECTORY_DOWNLOADS}/$APP_FOLDER"
+            StorageLocation.INTERNAL -> return
         }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+ use MediaStore
-            val resolver = context.contentResolver
-            val contentValues = ContentValues().apply {
+
+        val resolver = context.contentResolver
+        val uri = resolver.insert(
+            MediaStore.Files.getContentUri("external"),
+            ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                 put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
                 put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            
-            val uri = resolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
-            uri?.let {
-                resolver.openOutputStream(it)?.use { outputStream ->
-                    sourceFile.inputStream().use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                }
-            }
-        } else {
-            // Android 9 and below - direct file access
-            val baseDir = when (location) {
-                StorageLocation.DOCUMENTS -> Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-                StorageLocation.DOWNLOADS -> Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                StorageLocation.INTERNAL -> return
-            }
-            
-            val destDir = File(baseDir, APP_FOLDER)
-            if (!destDir.exists()) {
-                destDir.mkdirs()
-            }
-            
-            val destFile = File(destDir, fileName)
-            sourceFile.copyTo(destFile, overwrite = true)
+        ) ?: error("Could not create public PDF copy")
+
+        try {
+            resolver.openOutputStream(uri)?.use { output ->
+                sourceFile.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("Could not write public PDF copy")
+
+            resolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null
+            )
+            ExportRegistry.recordPublicCopy(context, uri)
+        } catch (error: Throwable) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw error
         }
     }
-    
-    /**
-     * Scale bitmap for quality setting
-     */
+
     private fun scaleForQuality(bitmap: Bitmap, quality: QualityType): Bitmap {
-        val maxDim = quality.maxDimension
-        val currentMax = maxOf(bitmap.width, bitmap.height)
-        
-        if (currentMax <= maxDim) {
-            return bitmap
-        }
-        
-        val scale = maxDim.toFloat() / currentMax
-        val newWidth = (bitmap.width * scale).toInt()
-        val newHeight = (bitmap.height * scale).toInt()
-        
-        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        val largest = maxOf(bitmap.width, bitmap.height)
+        if (largest <= quality.maxDimension) return bitmap
+        val scale = quality.maxDimension.toFloat() / largest
+        return Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).toInt().coerceAtLeast(1),
+            (bitmap.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
     }
-    
-    /**
-     * Generate thumbnail from bitmap
-     */
+
     fun generateThumbnail(context: Context, bitmap: Bitmap, documentId: String): String {
-        val thumbnailsDir = File(context.filesDir, "thumbnails")
-        if (!thumbnailsDir.exists()) {
-            thumbnailsDir.mkdirs()
+        val dir = File(context.filesDir, "thumbnails")
+        require(dir.exists() || dir.mkdirs())
+        val largest = maxOf(bitmap.width, bitmap.height).coerceAtLeast(1)
+        val scale = minOf(1f, 400f / largest)
+        val thumbnail = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1),
+                true
+            )
+        } else bitmap
+
+        val file = File(dir, "thumb_$documentId.jpg")
+        try {
+            FileOutputStream(file).use { output ->
+                require(thumbnail.compress(Bitmap.CompressFormat.JPEG, 85, output))
+            }
+        } finally {
+            if (thumbnail !== bitmap && !thumbnail.isRecycled) thumbnail.recycle()
         }
-        
-        val maxSize = 400
-        val scale = minOf(maxSize.toFloat() / bitmap.width, maxSize.toFloat() / bitmap.height)
-        val thumbWidth = (bitmap.width * scale).toInt()
-        val thumbHeight = (bitmap.height * scale).toInt()
-        
-        val thumbnail = Bitmap.createScaledBitmap(bitmap, thumbWidth, thumbHeight, true)
-        
-        val thumbFile = File(thumbnailsDir, "thumb_$documentId.jpg")
-        FileOutputStream(thumbFile).use { fos ->
-            thumbnail.compress(Bitmap.CompressFormat.JPEG, 85, fos)
-        }
-        
-        return thumbFile.absolutePath
+        return file.absolutePath
     }
-    
-    /**
-     * Get file size of PDF
-     */
-    fun getFileSize(filePath: String): Long {
-        return File(filePath).length()
+
+    fun getFileSize(filePath: String): Long = File(filePath).length()
+
+    fun formatFileSize(bytes: Long): String = when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+        else -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     }
-    
-    /**
-     * Format file size for display
-     */
-    fun formatFileSize(bytes: Long): String {
-        return when {
-            bytes < 1024 -> "$bytes B"
-            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-            else -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-        }
-    }
-    
-    /**
-     * Delete PDF and associated files
-     */
+
     fun deleteDocument(pdfPath: String, thumbnailPath: String?) {
-        File(pdfPath).delete()
-        thumbnailPath?.let { File(it).delete() }
+        runCatching { File(pdfPath).delete() }
+        thumbnailPath?.let { runCatching { File(it).delete() } }
     }
-    
-    /**
-     * Get page count from PDF
-     */
+
     fun getPageCount(pdfPath: String): Int {
+        var reader: PdfReader? = null
         return try {
-            val reader = PdfReader(pdfPath)
-            val count = reader.numberOfPages
-            reader.close()
-            count
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to read PDF: ${e.message}")
+            reader = PdfReader(pdfPath)
+            reader.numberOfPages
+        } catch (error: Throwable) {
+            Log.e(TAG, "Failed to read PDF", error)
             0
+        } finally {
+            reader?.close()
         }
     }
+
+    private fun sanitizeFileName(value: String): String = value.trim()
+        .replace(Regex("[^\\p{L}\\p{N}._-]+"), "_")
+        .replace(Regex("_+"), "_")
+        .trim('_', '.', ' ')
+        .take(90)
+        .ifBlank { "Document" }
 }

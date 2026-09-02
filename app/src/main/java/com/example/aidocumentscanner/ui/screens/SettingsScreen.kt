@@ -16,7 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
@@ -147,7 +147,8 @@ object SettingsPreferences {
 fun SettingsScreen(
     currentThemeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onPrivacyClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var storage by remember {
@@ -167,7 +168,7 @@ fun SettingsScreen(
                         onClick = onBack,
                         modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -210,6 +211,13 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             SettingsSection("Privacy & processing") {
+                SettingsRow(
+                    title = "Privacy & data",
+                    subtitle = "Permissions, local storage, exports and erase controls",
+                    icon = Icons.Default.PrivacyTip,
+                    onClick = onPrivacyClick
+                )
+                HorizontalDivider()
                 StaticSettingsRow(
                     title = "On-device processing",
                     subtitle = "Scanning, PDF tools and bundled OCR run locally on this device.",
